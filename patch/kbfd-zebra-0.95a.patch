@@ -1,4 +1,4 @@
-diff -upwbr zebra-0.95a.orig/bgpd/bgp_fsm.c zebra-0.95a/bgpd/bgp_fsm.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_fsm.c zebra-0.95a/bgpd/bgp_fsm.c
 --- zebra-0.95a.orig/bgpd/bgp_fsm.c	2004-12-28 14:10:45.000000000 +0900
 +++ zebra-0.95a/bgpd/bgp_fsm.c	2007-03-03 15:14:56.000000000 +0900
 @@ -40,6 +40,7 @@ Software Foundation, Inc., 59 Temple Pla
@@ -30,7 +30,7 @@ diff -upwbr zebra-0.95a.orig/bgpd/bgp_fsm.c zebra-0.95a/bgpd/bgp_fsm.c
    /* Send route-refresh when ORF is enabled */
    for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
      for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
-diff -upwbr zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/bgp_zebra.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/bgp_zebra.c
 --- zebra-0.95a.orig/bgpd/bgp_zebra.c	2004-07-20 14:08:17.000000000 +0900
 +++ zebra-0.95a/bgpd/bgp_zebra.c	2007-03-03 15:28:26.000000000 +0900
 @@ -345,6 +345,68 @@ zebra_read_ipv6 (int command, struct zcl
@@ -111,7 +111,7 @@ diff -upwbr zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/bgp_zebra.c
  
    /* Interface related init. */
    if_init ();
-diff -upwbr zebra-0.95a.orig/bgpd/bgp_zebra.h zebra-0.95a/bgpd/bgp_zebra.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.h zebra-0.95a/bgpd/bgp_zebra.h
 --- zebra-0.95a.orig/bgpd/bgp_zebra.h	2002-07-08 23:24:48.000000000 +0900
 +++ zebra-0.95a/bgpd/bgp_zebra.h	2007-02-27 23:29:02.000000000 +0900
 @@ -37,3 +37,6 @@ struct interface *if_lookup_by_ipv4_exac
@@ -121,10 +121,7 @@ diff -upwbr zebra-0.95a.orig/bgpd/bgp_zebra.h zebra-0.95a/bgpd/bgp_zebra.h
 +
 +int bgp_bfd_peer_add (union sockunion *, int, u_char);
 +int bgp_bfd_peer_delete (union sockunion *, int, u_char);
-zebra-0.95a/bgpdだけに発見: bgp_zebra.h~
-zebra-0.95a/bgpdだけに発見: bgp_zebra.o
-zebra-0.95a/bgpdだけに発見: bgpd
-diff -upwbr zebra-0.95a.orig/bgpd/bgpd.c zebra-0.95a/bgpd/bgpd.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgpd.c zebra-0.95a/bgpd/bgpd.c
 --- zebra-0.95a.orig/bgpd/bgpd.c	2005-01-07 13:36:08.000000000 +0900
 +++ zebra-0.95a/bgpd/bgpd.c	2007-03-03 15:42:32.000000000 +0900
 @@ -1304,6 +1304,10 @@ peer_delete (struct peer *peer)
@@ -138,7 +135,7 @@ diff -upwbr zebra-0.95a.orig/bgpd/bgpd.c zebra-0.95a/bgpd/bgpd.c
    /* Stop all timers. */
    BGP_TIMER_OFF (peer->t_start);
    BGP_TIMER_OFF (peer->t_connect);
-diff -upwbr zebra-0.95a.orig/bgpd/bgpd.h zebra-0.95a/bgpd/bgpd.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgpd.h zebra-0.95a/bgpd/bgpd.h
 --- zebra-0.95a.orig/bgpd/bgpd.h	2005-08-05 19:18:33.000000000 +0900
 +++ zebra-0.95a/bgpd/bgpd.h	2007-03-03 15:14:36.000000000 +0900
 @@ -496,6 +496,7 @@ struct peer
@@ -149,7 +146,7 @@ diff -upwbr zebra-0.95a.orig/bgpd/bgpd.h zebra-0.95a/bgpd/bgpd.h
  
    /* The kind of route-map Flags.*/
    u_char rmap_type;
-diff -upwbr zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zclient.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zclient.c
 --- zebra-0.95a.orig/lib/zclient.c	2002-10-05 10:27:49.000000000 +0900
 +++ zebra-0.95a/lib/zclient.c	2007-03-03 23:45:02.000000000 +0900
 @@ -21,6 +21,7 @@
@@ -244,7 +241,7 @@ diff -upwbr zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zclient.c
      default:
        break;
      }
-diff -upwbr zebra-0.95a.orig/lib/zclient.h zebra-0.95a/lib/zclient.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zclient.h zebra-0.95a/lib/zclient.h
 --- zebra-0.95a.orig/lib/zclient.h	2001-01-11 10:07:27.000000000 +0900
 +++ zebra-0.95a/lib/zclient.h	2007-03-09 01:19:05.000000000 +0900
 @@ -24,6 +24,7 @@
@@ -273,7 +270,7 @@ diff -upwbr zebra-0.95a.orig/lib/zclient.h zebra-0.95a/lib/zclient.h
 +int zapi_bfd_peer_delete (struct zclient *, union sockunion *, int, u_char);
 +
  #endif /* _ZEBRA_ZCLIENT_H */
-diff -upwbr zebra-0.95a.orig/lib/zebra.h zebra-0.95a/lib/zebra.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zebra.h zebra-0.95a/lib/zebra.h
 --- zebra-0.95a.orig/lib/zebra.h	2004-02-03 02:55:48.000000000 +0900
 +++ zebra-0.95a/lib/zebra.h	2007-02-27 22:35:01.000000000 +0900
 @@ -233,7 +233,11 @@ struct in_pktinfo
@@ -289,7 +286,7 @@ diff -upwbr zebra-0.95a.orig/lib/zebra.h zebra-0.95a/lib/zebra.h
  
  /* Zebra route's types. */
  #define ZEBRA_ROUTE_SYSTEM               0
-diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_interface.c zebra-0.95a/ospf6d/ospf6_interface.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_interface.c zebra-0.95a/ospf6d/ospf6_interface.c
 --- zebra-0.95a.orig/ospf6d/ospf6_interface.c	2005-06-07 18:31:03.000000000 +0900
 +++ zebra-0.95a/ospf6d/ospf6_interface.c	2007-03-10 23:26:39.000000000 +0900
 @@ -40,6 +40,7 @@
@@ -417,7 +414,7 @@ diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_interface.c zebra-0.95a/ospf6d/ospf6_i
  }
  
  DEFUN (debug_ospf6_interface,
-diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_interface.h zebra-0.95a/ospf6d/ospf6_interface.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_interface.h zebra-0.95a/ospf6d/ospf6_interface.h
 --- zebra-0.95a.orig/ospf6d/ospf6_interface.h	2004-08-13 01:37:03.000000000 +0900
 +++ zebra-0.95a/ospf6d/ospf6_interface.h	2007-03-10 22:13:04.000000000 +0900
 @@ -120,6 +120,7 @@ extern char *ospf6_interface_state_str[]
@@ -428,7 +425,7 @@ diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_interface.h zebra-0.95a/ospf6d/ospf6_i
  
  
  /* Function Prototypes */
-diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_message.c zebra-0.95a/ospf6d/ospf6_message.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_message.c zebra-0.95a/ospf6d/ospf6_message.c
 --- zebra-0.95a.orig/ospf6d/ospf6_message.c	2005-06-24 00:39:18.000000000 +0900
 +++ zebra-0.95a/ospf6d/ospf6_message.c	2007-03-10 23:38:21.000000000 +0900
 @@ -40,6 +40,8 @@
@@ -462,7 +459,7 @@ diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_message.c zebra-0.95a/ospf6d/ospf6_mes
    /* TwoWay check */
    for (p = (char *) ((caddr_t) hello + sizeof (struct ospf6_hello));
         p + sizeof (u_int32_t) <= OSPF6_MESSAGE_END (oh);
-diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_neighbor.c zebra-0.95a/ospf6d/ospf6_neighbor.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_neighbor.c zebra-0.95a/ospf6d/ospf6_neighbor.c
 --- zebra-0.95a.orig/ospf6d/ospf6_neighbor.c	2004-09-03 08:25:12.000000000 +0900
 +++ zebra-0.95a/ospf6d/ospf6_neighbor.c	2007-03-10 23:44:39.000000000 +0900
 @@ -38,6 +38,8 @@
@@ -526,7 +523,7 @@ diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_neighbor.c zebra-0.95a/ospf6d/ospf6_ne
    vty_out (vty, "    His IfIndex: %d Link-local address: %s%s",
             on->ifindex, linklocal_addr,
             VNL);
-diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_neighbor.h zebra-0.95a/ospf6d/ospf6_neighbor.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_neighbor.h zebra-0.95a/ospf6d/ospf6_neighbor.h
 --- zebra-0.95a.orig/ospf6d/ospf6_neighbor.h	2004-01-10 02:18:22.000000000 +0900
 +++ zebra-0.95a/ospf6d/ospf6_neighbor.h	2007-03-10 22:27:43.000000000 +0900
 @@ -93,6 +93,11 @@ struct ospf6_neighbor
@@ -549,7 +546,7 @@ diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_neighbor.h zebra-0.95a/ospf6d/ospf6_ne
  
  void ospf6_neighbor_init ();
  int config_write_ospf6_debug_neighbor (struct vty *vty);
-diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_zebra.c zebra-0.95a/ospf6d/ospf6_zebra.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_zebra.c zebra-0.95a/ospf6d/ospf6_zebra.c
 --- zebra-0.95a.orig/ospf6d/ospf6_zebra.c	2004-08-01 09:50:28.000000000 +0900
 +++ zebra-0.95a/ospf6d/ospf6_zebra.c	2007-03-10 23:39:34.000000000 +0900
 @@ -28,6 +28,7 @@
@@ -688,7 +685,7 @@ diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_zebra.c zebra-0.95a/ospf6d/ospf6_zebra
  
    /* redistribute connected route by default */
    /* ospf6_zebra_redistribute (ZEBRA_ROUTE_CONNECT); */
-diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_zebra.h zebra-0.95a/ospf6d/ospf6_zebra.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_zebra.h zebra-0.95a/ospf6d/ospf6_zebra.h
 --- zebra-0.95a.orig/ospf6d/ospf6_zebra.h	2004-01-10 02:18:23.000000000 +0900
 +++ zebra-0.95a/ospf6d/ospf6_zebra.h	2007-03-10 22:37:22.000000000 +0900
 @@ -49,5 +49,9 @@ void ospf6_zebra_init ();
@@ -701,7 +698,7 @@ diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_zebra.h zebra-0.95a/ospf6d/ospf6_zebra
 +
  #endif /*OSPF6_ZEBRA_H*/
  
-diff -upwbr zebra-0.95a.orig/ospfd/ospf_neighbor.h zebra-0.95a/ospfd/ospf_neighbor.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_neighbor.h zebra-0.95a/ospfd/ospf_neighbor.h
 --- zebra-0.95a.orig/ospfd/ospf_neighbor.h	2003-03-22 17:07:32.000000000 +0900
 +++ zebra-0.95a/ospfd/ospf_neighbor.h	2007-03-10 00:39:29.000000000 +0900
 @@ -81,6 +81,9 @@ struct ospf_neighbor
@@ -714,7 +711,7 @@ diff -upwbr zebra-0.95a.orig/ospfd/ospf_neighbor.h zebra-0.95a/ospfd/ospf_neighb
  };
  
  /* Macros. */
-diff -upwbr zebra-0.95a.orig/ospfd/ospf_nsm.c zebra-0.95a/ospfd/ospf_nsm.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_nsm.c zebra-0.95a/ospfd/ospf_nsm.c
 --- zebra-0.95a.orig/ospfd/ospf_nsm.c	2003-03-22 17:07:32.000000000 +0900
 +++ zebra-0.95a/ospfd/ospf_nsm.c	2007-03-10 00:48:22.000000000 +0900
 @@ -47,6 +47,7 @@
@@ -736,7 +733,7 @@ diff -upwbr zebra-0.95a.orig/ospfd/ospf_nsm.c zebra-0.95a/ospfd/ospf_nsm.c
    return 0;
  }
  
-diff -upwbr zebra-0.95a.orig/ospfd/ospf_packet.c zebra-0.95a/ospfd/ospf_packet.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_packet.c zebra-0.95a/ospfd/ospf_packet.c
 --- zebra-0.95a.orig/ospfd/ospf_packet.c	2005-06-21 09:58:24.000000000 +0900
 +++ zebra-0.95a/ospfd/ospf_packet.c	2007-03-10 00:45:03.000000000 +0900
 @@ -47,6 +47,7 @@
@@ -767,7 +764,7 @@ diff -upwbr zebra-0.95a.orig/ospfd/ospf_packet.c zebra-0.95a/ospfd/ospf_packet.c
    /* Add event to thread. */
    OSPF_NSM_EVENT_EXECUTE (nbr, NSM_HelloReceived);
  
-diff -upwbr zebra-0.95a.orig/ospfd/ospf_zebra.c zebra-0.95a/ospfd/ospf_zebra.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_zebra.c zebra-0.95a/ospfd/ospf_zebra.c
 --- zebra-0.95a.orig/ospfd/ospf_zebra.c	2004-01-10 02:18:23.000000000 +0900
 +++ zebra-0.95a/ospfd/ospf_zebra.c	2007-03-10 01:12:00.000000000 +0900
 @@ -47,6 +47,9 @@
@@ -890,7 +887,7 @@ diff -upwbr zebra-0.95a.orig/ospfd/ospf_zebra.c zebra-0.95a/ospfd/ospf_zebra.c
  
    access_list_add_hook (ospf_filter_update);
    access_list_delete_hook (ospf_filter_update);
-diff -upwbr zebra-0.95a.orig/ospfd/ospf_zebra.h zebra-0.95a/ospfd/ospf_zebra.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_zebra.h zebra-0.95a/ospfd/ospf_zebra.h
 --- zebra-0.95a.orig/ospfd/ospf_zebra.h	2003-03-29 04:55:29.000000000 +0900
 +++ zebra-0.95a/ospfd/ospf_zebra.h	2007-03-09 01:18:23.000000000 +0900
 @@ -70,6 +70,8 @@ void ospf_routemap_set (struct ospf *, i
@@ -902,7 +899,7 @@ diff -upwbr zebra-0.95a.orig/ospfd/ospf_zebra.h zebra-0.95a/ospfd/ospf_zebra.h
  void ospf_zebra_init ();
  
  #endif /* _ZEBRA_OSPF_ZEBRA_H */
-diff -upwbr zebra-0.95a.orig/ospfd/ospfd.c zebra-0.95a/ospfd/ospfd.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospfd.c zebra-0.95a/ospfd/ospfd.c
 --- zebra-0.95a.orig/ospfd/ospfd.c	2004-01-10 02:18:23.000000000 +0900
 +++ zebra-0.95a/ospfd/ospfd.c	2007-03-09 01:18:46.000000000 +0900
 @@ -33,6 +33,7 @@ Software Foundation, Inc., 59 Temple Pla
@@ -921,7 +918,7 @@ diff -upwbr zebra-0.95a.orig/ospfd/ospfd.c zebra-0.95a/ospfd/ospfd.c
        OSPF_NSM_EVENT_EXECUTE (nbr, NSM_Start);
      }
  }
-diff -upwbr zebra-0.95a.orig/zebra/Makefile.am zebra-0.95a/zebra/Makefile.am
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/Makefile.am zebra-0.95a/zebra/Makefile.am
 --- zebra-0.95a.orig/zebra/Makefile.am	2004-04-29 01:05:31.000000000 +0900
 +++ zebra-0.95a/zebra/Makefile.am	2007-02-26 22:59:24.000000000 +0900
 @@ -22,7 +22,7 @@ sbin_PROGRAMS = zebra
@@ -933,7 +930,395 @@ diff -upwbr zebra-0.95a.orig/zebra/Makefile.am zebra-0.95a/zebra/Makefile.am
  
  noinst_HEADERS = \
  	connected.h ioctl.h rib.h rt.h zserv.h redistribute.h debug.h rtadv.h \
-diff -upwbr zebra-0.95a.orig/zebra/main.c zebra-0.95a/zebra/main.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/zebra/bfd_netlink.c
+--- zebra-0.95a.orig/zebra/bfd_netlink.c	1970-01-01 09:00:00.000000000 +0900
++++ zebra-0.95a/zebra/bfd_netlink.c	2007-03-11 00:42:16.000000000 +0900
+@@ -0,0 +1,336 @@
++/*
++ * BFD Function Interface with netlink interface
++ *
++ * Copyright (C) 2007  Hajime TAZAKI
++ *
++ * This file is part of GNU Zebra.
++ *
++ * GNU Zebra is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * GNU Zebra is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with GNU Zebra; see the file COPYING.  If not, write to the Free
++ * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
++ * 02111-1307, USA.  
++ */
++#include <zebra.h>
++#include "../kbfd/kbfd_netlink.h"
++
++#include "log.h"
++#include "thread.h"
++#include "sockunion.h"
++#include "prefix.h"
++#include "zclient.h"
++#include "linklist.h"
++#include "command.h"
++
++#include "zebra/netlink.h"
++#include "zebra/bfd_netlink.h"
++#include "zebra/rib.h"
++#include "zebra/zserv.h"
++#include "zebra/debug.h"
++
++struct nlsock bfd_nlsock = {-1, 0, {0}, "bfd-netlink", NULL};
++extern struct thread_master *master;
++extern list client_list;
++
++char *bfd_nl_msg_str[] =
++{
++	"BFD_NEWPEER",
++	"BFD_DELPEER",
++	"BFD_GETPEER",
++	"BFD_ADMINDOWN",
++	"BFD_GETPEERSTAT",
++};
++
++char *bfd_state_string[] = {
++	"AdminDown",
++	"Down",
++	"Init",
++	"Up",		
++};
++
++static int
++bfd_netlink_state_change (struct sockaddr_nl *snl, struct nlmsghdr *h)
++{
++	int len;
++	struct bfd_nl_peerinfo *peerinfo;
++	struct bfd_peer peer;
++	struct zserv *client;
++	listnode node;
++
++	if (h->nlmsg_type != BFD_NEWPEER){
++		zlog_warn("invalid nlmsg_type");
++		return 0;
++	}
++
++	len = h->nlmsg_len - NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++	if (len < 0)
++		return -1;
++
++	peerinfo = NLMSG_DATA (h);
++	if (IS_ZEBRA_DEBUG_KERNEL)
++		zlog_info("rcvd peerinfo %s: state=%d, ifindex=%d",
++				  sockunion_log ((union sockunion *)&peerinfo->dst),
++				  peerinfo->state, peerinfo->ifindex);
++
++	memcpy (&peer.su, &peerinfo->dst.sa, sizeof(union sockunion));
++	peer.ifindex = peerinfo->ifindex;
++
++	if (peerinfo->state == BSM_Up){
++		for (node = listhead (client_list); node; nextnode (node))
++			if ((client = getdata (node)) != NULL)
++				zsend_bfd_peer_up (client, &peer);
++	}
++	else if (peerinfo->state == BSM_Down){
++		for (node = listhead (client_list); node; nextnode (node))
++			if ((client = getdata (node)) != NULL)
++				zsend_bfd_peer_down (client, &peer);
++	}
++	else{
++	}
++
++	return 0;
++}
++
++static int
++kernel_bfd_read(struct thread *th)
++{
++	int ret;
++	int sock;
++
++	sock = THREAD_FD (th);
++	ret = netlink_parse_info (bfd_netlink_state_change, &bfd_nlsock);
++    thread_add_read (master, kernel_bfd_read, NULL, bfd_nlsock.sock);
++	return 0;
++}
++
++/* User=>Kernel Netlink message */
++static int
++bfd_netlink_peer(int cmd, struct bfd_peer *peer)
++{
++	int ret;
++	size_t size;
++	struct {
++		struct nlmsghdr nlh;
++		struct bfd_nl_peerinfo info;
++	} req;
++
++	memset (&req, 0, sizeof req);
++	req.nlh.nlmsg_len = NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++	req.nlh.nlmsg_flags = NLM_F_CREATE | NLM_F_REQUEST | NLM_F_ACK;
++	req.nlh.nlmsg_type = cmd;
++
++	if (peer->su.sa.sa_family == AF_INET)
++		size = sizeof(struct sockaddr_in);
++	else if (peer->su.sa.sa_family == AF_INET6)
++		size = sizeof(struct sockaddr_in6);
++	else{
++		zlog_warn ("peer sockaddr is invalid");
++		return -1;
++	}
++
++	memcpy(&req.info.dst.sa, &peer->su, size);
++	//	memcpy(&req.info.dst, &peer->su, sizeof(union sockunion));
++	req.info.ifindex = peer->ifindex;
++
++	ret = netlink_talk (&req.nlh, &bfd_nlsock);
++	if (ret < 0){
++		perror ("sendmsg");
++		return -1;
++	}
++
++  if (IS_ZEBRA_DEBUG_KERNEL)
++	  zlog_info("bfd peer %s (%s)", bfd_nl_msg_str[cmd-1], 
++				sockunion_log (&peer->su));
++	return 0;
++}
++
++int
++kernel_bfd_add_peer(struct bfd_peer *peer)
++{
++	bfd_netlink_peer(BFD_NEWPEER, peer);
++	return 0;
++}
++
++int
++kernel_bfd_delete_peer(struct bfd_peer *peer)
++{
++	bfd_netlink_peer(BFD_DELPEER, peer);
++	return 0;
++}
++
++/* Request Message */
++static int
++bfd_netlink_request (int type, struct nlsock *nl)
++{
++  int ret;
++  struct sockaddr_nl snl;
++
++  struct
++  {
++    struct nlmsghdr nlh;
++    struct bfd_nl_peerinfo peer;
++  } req;
++
++
++  /* Check netlink socket. */
++  if (nl->sock < 0){
++      zlog_err ("%s socket isn't active.", nl->name);
++      return -1;
++  }
++
++  memset (&snl, 0, sizeof snl);
++  snl.nl_family = AF_NETLINK;
++
++  memset (&req, 0, sizeof req);
++  req.nlh.nlmsg_len = sizeof req;
++  req.nlh.nlmsg_type = type;
++  req.nlh.nlmsg_flags = NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST;
++  req.nlh.nlmsg_pid = 0;
++  req.nlh.nlmsg_seq = ++nl->seq;
++  //  memcpy (&req.peer.su.sa, &su, sizeof (req.peer.su));
++ 
++  ret = sendto (nl->sock, (void*) &req, sizeof req, 0, 
++				(struct sockaddr*) &snl, sizeof snl);
++  if (ret < 0){
++      zlog_err ("%s sendto failed: %s", nl->name, strerror (errno));
++      return -1;
++  }
++
++  return 0;
++}
++
++static int
++bfd_netlink_peer_info (struct sockaddr_nl *snl, struct nlmsghdr *h)
++{
++	int len;
++	struct bfd_nl_peerinfo *peer;
++	char buf1[BUFSIZ], buf2[BUFSIZ];
++	struct vty *vty = bfd_nlsock.vty;
++
++	if (h->nlmsg_type != BFD_NEWPEER){
++		zlog_warn("invalid nlmsg_type");
++		return 0;
++	}
++
++	len = h->nlmsg_len - NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++	if (len < 0)
++		return -1;
++
++	peer = NLMSG_DATA (h);
++
++	vty_out (vty, "%-15s %-15s %2u/%-2u %2d %8d(%4d) %6s %s%s", 
++			 inet_ntop (peer->src.sa.sa_family,
++						peer->src.sa.sa_family == AF_INET ? 
++						(char *)&peer->src.sin.sin_addr
++						: (char *)&peer->src.sin6.sin6_addr, buf1, BUFSIZ),
++			 inet_ntop (peer->dst.sa.sa_family,
++						peer->dst.sa.sa_family == AF_INET ? 
++						(char *)&peer->dst.sin.sin_addr
++						: (char *)&peer->dst.sin6.sin6_addr, buf2, BUFSIZ),
++			 ntohl(peer->my_disc),
++			 ntohl(peer->your_disc),
++			 1,
++			 0,0,
++			 bfd_state_string[peer->state],
++			 ifindex2ifname (peer->ifindex),
++			 VTY_NEWLINE);
++			 
++	return 0;
++}
++
++
++int
++bfd_netlink_peer_list(struct vty *vty)
++{
++	int ret;
++
++	ret = bfd_netlink_request (BFD_GETPEER, &bfd_nlsock);
++	if (ret < 0)
++		return ret;
++	bfd_nlsock.vty = vty;
++	ret = netlink_parse_info (bfd_netlink_peer_info, &bfd_nlsock);
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++
++#define  SHOW_BFD_HEADER   "OurAddr         NeighAddr       LD/RD RH Holddown(mult)  State Int %s"
++DEFUN (show_bfd_neighbors,
++       show_bfd_neighbors_cmd,
++       "show bfd neighbors",
++       SHOW_STR
++	   "Bi-Directional Forarding Detection\n"
++       "Neighbor \n")
++{
++
++	vty_out (vty, SHOW_BFD_HEADER, VTY_NEWLINE);
++
++	bfd_netlink_peer_list (vty);
++	return CMD_SUCCESS;
++}
++
++
++int
++bfd_netlink_init()
++{
++	int ret;
++	struct sockaddr_nl snl;
++	int namelen;
++
++	bfd_nlsock.sock = socket (AF_NETLINK, SOCK_RAW, NETLINK_BFD);
++	if (bfd_nlsock.sock < 0){
++		zlog_err ("Can't open %s socket: %s", bfd_nlsock.name,
++			  strerror (errno));
++		return -1;
++	}
++
++	ret = fcntl (bfd_nlsock.sock, F_SETFL, O_NONBLOCK);
++	if (ret < 0){
++		zlog_err ("Can't set %s socket flags: %s", bfd_nlsock.name,
++			  strerror (errno));
++		close (bfd_nlsock.sock);
++		return -1;
++	}
++  
++	memset (&snl, 0, sizeof snl);
++	snl.nl_family = AF_NETLINK;
++	snl.nl_groups = 1;
++
++	/* Bind the socket to the netlink structure for anything. */
++	ret = bind (bfd_nlsock.sock, (struct sockaddr *) &snl, sizeof snl);
++	if (ret < 0){
++		zlog_err ("Can't bind %s socket to group 0x%x: %s", 
++			  bfd_nlsock.name, snl.nl_groups, strerror (errno));
++		close (bfd_nlsock.sock);
++		return -1;
++	}
++
++	/* multiple netlink sockets will have different nl_pid */
++	namelen = sizeof snl;
++	ret = getsockname (bfd_nlsock.sock, (struct sockaddr *) &snl, (socklen_t *)&namelen);
++	if (ret < 0 || namelen != sizeof snl){
++		zlog_err ("Can't get %s socket name: %s", bfd_nlsock.name,
++			  strerror (errno));
++		close (bfd_nlsock.sock);
++		return -1;
++	}
++
++	/* Now schedule incoming kernel message */
++    thread_add_read (master, kernel_bfd_read, NULL, bfd_nlsock.sock);
++
++	install_element (VIEW_NODE, &show_bfd_neighbors_cmd);
++	install_element (ENABLE_NODE, &show_bfd_neighbors_cmd);
++
++	return ret;
++}
++
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.h zebra-0.95a/zebra/bfd_netlink.h
+--- zebra-0.95a.orig/zebra/bfd_netlink.h	1970-01-01 09:00:00.000000000 +0900
++++ zebra-0.95a/zebra/bfd_netlink.h	2007-03-03 15:02:46.000000000 +0900
+@@ -0,0 +1,44 @@
++/*
++ * BFD Function Interface with netlink interface
++ *
++ * Copyright (C) 2007  Hajime TAZAKI
++ *
++ * This file is part of GNU Zebra.
++ *
++ * GNU Zebra is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * GNU Zebra is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with GNU Zebra; see the file COPYING.  If not, write to the Free
++ * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
++ * 02111-1307, USA.  
++ */
++
++#ifndef __BFD_NETLINK_H_
++#define __BFD_NETLINK_H_
++
++#include "sockunion.h"
++
++struct bfd_peer
++{
++	union sockunion su;
++	int ifindex;
++	u_long appid;
++#define   BFD_PEER_SINGLE_HOP        0x01
++#define   BFD_PEER_MULTI_HOP         0x02
++	u_char type;
++	u_char pad1;
++	u_short pad2;
++};
++
++int kernel_bfd_add_peer(struct bfd_peer *);
++int kernel_bfd_delete_peer(struct bfd_peer *);
++
++#endif /* __BFD_NETLINK_H_ */
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/main.c zebra-0.95a/zebra/main.c
 --- zebra-0.95a.orig/zebra/main.c	2004-04-29 01:05:31.000000000 +0900
 +++ zebra-0.95a/zebra/main.c	2007-02-26 23:32:50.000000000 +0900
 @@ -35,6 +35,7 @@
@@ -952,7 +1337,46 @@ diff -upwbr zebra-0.95a.orig/zebra/main.c zebra-0.95a/zebra/main.c
  
    /* Sort VTY commands. */
    sort_node ();
-diff -upwbr zebra-0.95a.orig/zebra/rt_netlink.c zebra-0.95a/zebra/rt_netlink.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/netlink.h zebra-0.95a/zebra/netlink.h
+--- zebra-0.95a.orig/zebra/netlink.h	1970-01-01 09:00:00.000000000 +0900
++++ zebra-0.95a/zebra/netlink.h	2007-03-08 23:09:56.000000000 +0900
+@@ -0,0 +1,35 @@
++/* Kernel netlink interface GNU/Linux system.
++ * Copyright (C) 2007  Hajime TAZAKI
++ *
++ * This file is part of GNU Zebra.
++ *
++ * GNU Zebra is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2, or (at your option) any
++ * later version.
++ *
++ * GNU Zebra is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with GNU Zebra; see the file COPYING.  If not, write to the Free
++ * Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
++ * 02111-1307, USA.  
++ */
++
++/* Socket interface to kernel */
++struct nlsock
++{
++  int sock;
++  int seq;
++  struct sockaddr_nl snl;
++  char *name;
++  struct vty *vty;
++};
++
++int netlink_talk (struct nlmsghdr *, struct nlsock *);
++int netlink_parse_info (int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
++						struct nlsock *);
++int bfd_netlink_init();
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/rt_netlink.c zebra-0.95a/zebra/rt_netlink.c
 --- zebra-0.95a.orig/zebra/rt_netlink.c	2005-04-13 14:11:49.000000000 +0900
 +++ zebra-0.95a/zebra/rt_netlink.c	2007-03-08 01:40:02.000000000 +0900
 @@ -38,17 +38,11 @@
@@ -986,7 +1410,7 @@ diff -upwbr zebra-0.95a.orig/zebra/rt_netlink.c zebra-0.95a/zebra/rt_netlink.c
  netlink_parse_info (int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
  		    struct nlsock *nl)
  {
-diff -upwbr zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zserv.c
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zserv.c
 --- zebra-0.95a.orig/zebra/zserv.c	2003-02-21 08:27:24.000000000 +0900
 +++ zebra-0.95a/zebra/zserv.c	2007-03-03 14:59:58.000000000 +0900
 @@ -38,6 +38,7 @@
@@ -1146,7 +1570,7 @@ diff -upwbr zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zserv.c
      default:
        zlog_info ("Zebra received unknown command %d", command);
        break;
-diff -upwbr zebra-0.95a.orig/zebra/zserv.h zebra-0.95a/zebra/zserv.h
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.h zebra-0.95a/zebra/zserv.h
 --- zebra-0.95a.orig/zebra/zserv.h	2001-01-16 08:25:24.000000000 +0900
 +++ zebra-0.95a/zebra/zserv.h	2007-03-03 15:02:07.000000000 +0900
 @@ -22,6 +22,8 @@
@@ -1168,5 +1592,3 @@ diff -upwbr zebra-0.95a.orig/zebra/zserv.h zebra-0.95a/zebra/zserv.h
  extern pid_t pid;
  extern pid_t old_pid;
  
-zebra-0.95a/zebraだけに発見: zserv.h~
-zebra-0.95a/zebraだけに発見: zserv.o
