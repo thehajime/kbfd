@@ -1,0 +1,1172 @@
+diff -upwbr zebra-0.95a.orig/bgpd/bgp_fsm.c zebra-0.95a/bgpd/bgp_fsm.c
+--- zebra-0.95a.orig/bgpd/bgp_fsm.c	2004-12-28 14:10:45.000000000 +0900
++++ zebra-0.95a/bgpd/bgp_fsm.c	2007-03-03 15:14:56.000000000 +0900
+@@ -40,6 +40,7 @@ Software Foundation, Inc., 59 Temple Pla
+ #include "bgpd/bgp_route.h"
+ #include "bgpd/bgp_dump.h"
+ #include "bgpd/bgp_open.h"
++#include "bgpd/bgp_zebra.h"
+ #ifdef HAVE_SNMP
+ #include "bgpd/bgp_snmp.h"
+ #endif /* HAVE_SNMP */
+@@ -441,7 +442,8 @@ char *peer_down_str[] =
+   "Capability changed",
+   "Multihop config change",
+   "Password change",
+-  "NSF peer closed the session"
++  "NSF peer closed the session",
++  "BFD Session Down Detect",
+ };
+ 
+ int
+@@ -917,6 +919,10 @@ bgp_establish (struct peer *peer)
+   /* Reset uptime, send keepalive, send current table. */
+   bgp_uptime_reset (peer);
+ 
++  /* Setup bfd failure detection */
++  if (peer->established == 1)
++	  bgp_bfd_peer_add (&peer->su, 0, 1);
++
+   /* Send route-refresh when ORF is enabled */
+   for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
+     for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
+diff -upwbr zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/bgp_zebra.c
+--- zebra-0.95a.orig/bgpd/bgp_zebra.c	2004-07-20 14:08:17.000000000 +0900
++++ zebra-0.95a/bgpd/bgp_zebra.c	2007-03-03 15:28:26.000000000 +0900
+@@ -345,6 +345,68 @@ zebra_read_ipv6 (int command, struct zcl
+ }
+ #endif /* HAVE_IPV6 */
+ 
++int
++bgp_bfd_peer_add (union sockunion *su, int ifindex, u_char type)
++{
++  zapi_bfd_peer_add (zclient, su, ifindex, type);
++  return 0;
++}
++
++int
++bgp_bfd_peer_delete (union sockunion *su, int ifindex, u_char type)
++{
++  zapi_bfd_peer_delete (zclient, su, ifindex, type);
++  return 0;
++}
++
++int
++bgp_bfd_peer_up (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  return 0;
++}
++
++int
++bgp_bfd_peer_down (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct peer *peer;
++  struct bgp *bgp;
++  struct listnode *nn;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++
++  LIST_LOOP (bm->bgp, bgp, nn){
++	  peer = peer_lookup (bgp, &su);
++	  if (!peer)
++		  continue;
++
++	  zlog_info ("Detect BFD Peer Down %s", sockunion_log (&su));
++	  BGP_EVENT_ADD (peer, BGP_Stop);
++	  peer->last_reset = PEER_DOWN_BFD_SESSION_DOWN;
++  }
++
++  return 0;
++}
++
+ struct interface *
+ if_lookup_by_ipv4 (struct in_addr *addr)
+ {
+@@ -995,6 +1057,8 @@ bgp_zebra_init (int enable)
+   zclient->ipv6_route_add = zebra_read_ipv6;
+   zclient->ipv6_route_delete = zebra_read_ipv6;
+ #endif /* HAVE_IPV6 */
++  zclient->bfd_peer_up = bgp_bfd_peer_up;
++  zclient->bfd_peer_down = bgp_bfd_peer_down;
+ 
+   /* Interface related init. */
+   if_init ();
+diff -upwbr zebra-0.95a.orig/bgpd/bgp_zebra.h zebra-0.95a/bgpd/bgp_zebra.h
+--- zebra-0.95a.orig/bgpd/bgp_zebra.h	2002-07-08 23:24:48.000000000 +0900
++++ zebra-0.95a/bgpd/bgp_zebra.h	2007-02-27 23:29:02.000000000 +0900
+@@ -37,3 +37,6 @@ struct interface *if_lookup_by_ipv4_exac
+ struct interface *if_lookup_by_ipv6 (struct in6_addr *);
+ struct interface *if_lookup_by_ipv6_exact (struct in6_addr *);
+ #endif /* HAVE_IPV6 */
++
++int bgp_bfd_peer_add (union sockunion *, int, u_char);
++int bgp_bfd_peer_delete (union sockunion *, int, u_char);
+zebra-0.95a/bgpdだけに発見: bgp_zebra.h~
+zebra-0.95a/bgpdだけに発見: bgp_zebra.o
+zebra-0.95a/bgpdだけに発見: bgpd
+diff -upwbr zebra-0.95a.orig/bgpd/bgpd.c zebra-0.95a/bgpd/bgpd.c
+--- zebra-0.95a.orig/bgpd/bgpd.c	2005-01-07 13:36:08.000000000 +0900
++++ zebra-0.95a/bgpd/bgpd.c	2007-03-03 15:42:32.000000000 +0900
+@@ -1304,6 +1304,10 @@ peer_delete (struct peer *peer)
+       bgp_fsm_change_status (peer, Idle);
+     }
+ 
++  /* Unregister bfd failure detection */
++  if (!CHECK_FLAG (peer->sflags, PEER_STATUS_ACCEPT_PEER))
++	  bgp_bfd_peer_delete (&peer->su, 0, 1);
++
+   /* Stop all timers. */
+   BGP_TIMER_OFF (peer->t_start);
+   BGP_TIMER_OFF (peer->t_connect);
+diff -upwbr zebra-0.95a.orig/bgpd/bgpd.h zebra-0.95a/bgpd/bgpd.h
+--- zebra-0.95a.orig/bgpd/bgpd.h	2005-08-05 19:18:33.000000000 +0900
++++ zebra-0.95a/bgpd/bgpd.h	2007-03-03 15:14:36.000000000 +0900
+@@ -496,6 +496,7 @@ struct peer
+ #define PEER_DOWN_MULTIHOP_CHANGE       20 /* neighbor multihop command */
+ #define PEER_DOWN_PASSWORD_CHANGE       21 /* neighbor password command */
+ #define PEER_DOWN_NSF_CLOSE_SESSION     22 /* NSF tcp session close */
++#define PEER_DOWN_BFD_SESSION_DOWN      23 /* BFD Session Down Detect */
+ 
+   /* The kind of route-map Flags.*/
+   u_char rmap_type;
+diff -upwbr zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zclient.c
+--- zebra-0.95a.orig/lib/zclient.c	2002-10-05 10:27:49.000000000 +0900
++++ zebra-0.95a/lib/zclient.c	2007-03-03 23:45:02.000000000 +0900
+@@ -21,6 +21,7 @@
+ 
+ #include <zebra.h>
+ 
++#include "sockunion.h"
+ #include "prefix.h"
+ #include "stream.h"
+ #include "network.h"
+@@ -519,6 +520,68 @@ zapi_ipv6_delete (struct zclient *zclien
+ 
+ #endif /* HAVE_IPV6 */
+ 
++/* bfd peer function */
++int
++zapi_bfd_peer_add (struct zclient *zclient, union sockunion *su, 
++		   int ifindex, u_char type)
++{
++  struct stream *s;
++
++  /* Reset stream. */
++  s = zclient->obuf;
++  stream_reset (s);
++
++  /* Length place holder. */
++  stream_putw (s, 0);
++
++  /* Put command. */
++  stream_putc (s, ZEBRA_BFD_PEER_ADD);
++  
++  /* peer address */
++  stream_write (s, (u_char *)su, sizeof (union sockunion));
++  /* ifindex */
++  stream_putl (s, ifindex);
++  /* peer type */
++  stream_putc (s, type);
++
++  /* Put length at the first point of the stream. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  zlog_info ("BFD: peer add %s", sockunion_su2str (su));
++
++  return writen (zclient->sock, s->data, stream_get_endp (s));
++}
++
++/* bfd peer function */
++int
++zapi_bfd_peer_delete (struct zclient *zclient, union sockunion *su, 
++		      int ifindex, u_char type)
++{
++  struct stream *s;
++
++  /* Reset stream. */
++  s = zclient->obuf;
++  stream_reset (s);
++
++  /* Length place holder. */
++  stream_putw (s, 0);
++
++  /* Put command. */
++  stream_putc (s, ZEBRA_BFD_PEER_DELETE);
++  
++  /* peer address */
++  stream_write (s, (u_char *)su, sizeof (union sockunion));
++  /* ifindex */
++  stream_putl (s, ifindex);
++  /* peer type */
++  stream_putc (s, type);
++
++  /* Put length at the first point of the stream. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  return writen (zclient->sock, s->data, stream_get_endp (s));
++}
++
+ int
+ zebra_redistribute_send (int command, int sock, int type)
+ {
+@@ -812,6 +875,14 @@ zclient_read (struct thread *thread)
+       if (zclient->ipv6_route_delete)
+ 	ret = (*zclient->ipv6_route_delete) (command, zclient, length);
+       break;
++    case ZEBRA_BFD_PEER_UP:
++      if (zclient->bfd_peer_up)
++	ret = (*zclient->bfd_peer_up) (command, zclient, length);
++      break;
++    case ZEBRA_BFD_PEER_DOWN:
++      if (zclient->bfd_peer_down)
++	ret = (*zclient->bfd_peer_down) (command, zclient, length);
++      break;
+     default:
+       break;
+     }
+diff -upwbr zebra-0.95a.orig/lib/zclient.h zebra-0.95a/lib/zclient.h
+--- zebra-0.95a.orig/lib/zclient.h	2001-01-11 10:07:27.000000000 +0900
++++ zebra-0.95a/lib/zclient.h	2007-03-09 01:19:05.000000000 +0900
+@@ -24,6 +24,7 @@
+ 
+ /* For struct interface and struct connected. */
+ #include "if.h"
++#include "sockunion.h"
+ 
+ /* For input/output buffer to zebra. */
+ #define ZEBRA_MAX_PACKET_SIZ          4096
+@@ -72,6 +73,8 @@ struct zclient
+   int (*ipv4_route_delete) (int, struct zclient *, zebra_size_t);
+   int (*ipv6_route_add) (int, struct zclient *, zebra_size_t);
+   int (*ipv6_route_delete) (int, struct zclient *, zebra_size_t);
++  int (*bfd_peer_up) (int, struct zclient *, zebra_size_t);
++  int (*bfd_peer_down) (int, struct zclient *, zebra_size_t);
+ };
+ 
+ /* Zebra API message flag. */
+@@ -161,4 +164,8 @@ zapi_ipv6_delete (struct zclient *zclien
+ 
+ #endif /* HAVE_IPV6 */
+ 
++/* BFD related function */
++int zapi_bfd_peer_add (struct zclient *, union sockunion *, int, u_char);
++int zapi_bfd_peer_delete (struct zclient *, union sockunion *, int, u_char);
++
+ #endif /* _ZEBRA_ZCLIENT_H */
+diff -upwbr zebra-0.95a.orig/lib/zebra.h zebra-0.95a/lib/zebra.h
+--- zebra-0.95a.orig/lib/zebra.h	2004-02-03 02:55:48.000000000 +0900
++++ zebra-0.95a/lib/zebra.h	2007-02-27 22:35:01.000000000 +0900
+@@ -233,7 +233,11 @@ struct in_pktinfo
+ #define ZEBRA_IPV6_NEXTHOP_LOOKUP         16
+ #define ZEBRA_IPV4_IMPORT_LOOKUP          17
+ #define ZEBRA_IPV6_IMPORT_LOOKUP          18
+-#define ZEBRA_MESSAGE_MAX                 19
++#define ZEBRA_BFD_PEER_ADD                19
++#define ZEBRA_BFD_PEER_DELETE             20
++#define ZEBRA_BFD_PEER_UP                 21
++#define ZEBRA_BFD_PEER_DOWN               22
++#define ZEBRA_MESSAGE_MAX                 23
+ 
+ /* Zebra route's types. */
+ #define ZEBRA_ROUTE_SYSTEM               0
+diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_interface.c zebra-0.95a/ospf6d/ospf6_interface.c
+--- zebra-0.95a.orig/ospf6d/ospf6_interface.c	2005-06-07 18:31:03.000000000 +0900
++++ zebra-0.95a/ospf6d/ospf6_interface.c	2007-03-10 23:26:39.000000000 +0900
+@@ -40,6 +40,7 @@
+ #include "ospf6_neighbor.h"
+ #include "ospf6_intra.h"
+ #include "ospf6_spf.h"
++#include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+ unsigned char conf_debug_ospf6_interface = 0;
+@@ -838,10 +839,13 @@ ospf6_interface_show (struct vty *vty, s
+   else
+     vty_out (vty, "  Not Attached to Area%s", VNL);
+ 
+-  vty_out (vty, "  State %s, Transmit Delay %d sec, Priority %d%s",
++  vty_out (vty, "  State %s, Transmit Delay %d sec, Priority %d",
+            ospf6_interface_state_str[oi->state],
+-           oi->transdelay, oi->priority,
+-	   VNL);
++           oi->transdelay, oi->priority);
++  if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE))
++      vty_out (vty, ", BFD enabled");
++  vty_out (vty, "%s", VNL);
++
+   vty_out (vty, "  Timer intervals configured:%s", VNL);
+   vty_out (vty, "   Hello %d, Dead %d, Retransmit %d%s",
+            oi->hello_interval, oi->dead_interval, oi->rxmt_interval,
+@@ -1488,6 +1492,79 @@ DEFUN (no_ipv6_ospf6_advertise_prefix_li
+   return CMD_SUCCESS;
+ }
+ 
++DEFUN (ipv6_ospf6_bfd_enable,
++       ipv6_ospf6_bfd_enable_cmd,
++       "ipv6 ospf6 bfd-enable",
++       IP6_STR
++       OSPF6_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct ospf6_interface *oi;
++  struct interface *ifp;
++  listnode node;
++  struct ospf6_neighbor *on;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  oi = (struct ospf6_interface *) ifp->info;
++  if (oi == NULL)
++    oi = ospf6_interface_create (ifp);
++  assert (oi);
++
++  SET_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE);
++
++  for (node = listhead (oi->neighbor_list); node; nextnode (node))
++    {
++      on = (struct ospf6_neighbor *) getdata (node);
++      if (!CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++        {
++          SET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE);
++          ospf6_bfd_peer_add (on);
++        }
++    }
++
++  return CMD_SUCCESS;
++}
++
++DEFUN (no_ipv6_ospf6_bfd_enable,
++       no_ipv6_ospf6_bfd_enable_cmd,
++       "no ipv6 ospf6 bfd-enable",
++       NO_STR
++       IP6_STR
++       OSPF6_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct ospf6_interface *oi;
++  struct interface *ifp;
++  listnode node;
++  struct ospf6_neighbor *on;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  oi = (struct ospf6_interface *) ifp->info;
++  if (oi == NULL)
++    oi = ospf6_interface_create (ifp);
++  assert (oi);
++
++  UNSET_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE);
++
++  for (node = listhead (oi->neighbor_list); node; nextnode (node))
++    {
++      on = (struct ospf6_neighbor *) getdata (node);
++      if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++        {
++          UNSET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE);
++          ospf6_bfd_peer_delete (on);
++        }
++    }
++
++  return CMD_SUCCESS;
++}
++
+ int
+ config_write_ospf6_interface (struct vty *vty)
+ {
+@@ -1532,6 +1609,9 @@ config_write_ospf6_interface (struct vty
+       if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_PASSIVE))
+         vty_out (vty, " ipv6 ospf6 passive%s", VNL);
+ 
++      if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE))
++        vty_out (vty, " ipv6 ospf6 bfd-enable%s", VNL);
++
+       vty_out (vty, "!%s", VNL);
+     }
+   return 0;
+@@ -1586,6 +1666,9 @@ ospf6_interface_init ()
+ 
+   install_element (INTERFACE_NODE, &ipv6_ospf6_advertise_prefix_list_cmd);
+   install_element (INTERFACE_NODE, &no_ipv6_ospf6_advertise_prefix_list_cmd);
++
++  install_element (INTERFACE_NODE, &ipv6_ospf6_bfd_enable_cmd);
++  install_element (INTERFACE_NODE, &no_ipv6_ospf6_bfd_enable_cmd);
+ }
+ 
+ DEFUN (debug_ospf6_interface,
+diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_interface.h zebra-0.95a/ospf6d/ospf6_interface.h
+--- zebra-0.95a.orig/ospf6d/ospf6_interface.h	2004-08-13 01:37:03.000000000 +0900
++++ zebra-0.95a/ospf6d/ospf6_interface.h	2007-03-10 22:13:04.000000000 +0900
+@@ -120,6 +120,7 @@ extern char *ospf6_interface_state_str[]
+ /* flags */
+ #define OSPF6_INTERFACE_DISABLE      0x01
+ #define OSPF6_INTERFACE_PASSIVE      0x02
++#define OSPF6_INTERFACE_BFD_ENABLE   0x04
+ 
+ 
+ /* Function Prototypes */
+diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_message.c zebra-0.95a/ospf6d/ospf6_message.c
+--- zebra-0.95a.orig/ospf6d/ospf6_message.c	2005-06-24 00:39:18.000000000 +0900
++++ zebra-0.95a/ospf6d/ospf6_message.c	2007-03-10 23:38:21.000000000 +0900
+@@ -40,6 +40,8 @@
+ #include "ospf6_interface.h"
+ 
+ #include "ospf6_flood.h"
++#include "ospf6_route.h"
++#include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+ unsigned char conf_debug_ospf6_message[6] = {0x03, 0, 0, 0, 0, 0};
+@@ -328,6 +330,21 @@ ospf6_hello_recv (struct in6_addr *src, 
+   on->ifindex = ntohl (hello->interface_id);
+   memcpy (&on->linklocal_addr, src, sizeof (struct in6_addr));
+ 
++  if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE) &&
++      !CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++    {
++      SET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE);
++      ospf6_bfd_peer_add (on);
++   }
++
++  if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE) &&
++	  CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_DOWN))
++    {
++      if (IS_OSPF6_DEBUG_MESSAGE (oh->type, RECV))
++        zlog_info ("BFD State is DOWN. discard");
++      return;
++    }
++
+   /* TwoWay check */
+   for (p = (char *) ((caddr_t) hello + sizeof (struct ospf6_hello));
+        p + sizeof (u_int32_t) <= OSPF6_MESSAGE_END (oh);
+diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_neighbor.c zebra-0.95a/ospf6d/ospf6_neighbor.c
+--- zebra-0.95a.orig/ospf6d/ospf6_neighbor.c	2004-09-03 08:25:12.000000000 +0900
++++ zebra-0.95a/ospf6d/ospf6_neighbor.c	2007-03-10 23:44:39.000000000 +0900
+@@ -38,6 +38,8 @@
+ #include "ospf6_neighbor.h"
+ #include "ospf6_intra.h"
+ #include "ospf6_flood.h"
++#include "ospf6_route.h"
++#include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+ unsigned char conf_debug_ospf6_neighbor = 0;
+@@ -135,6 +137,9 @@ ospf6_neighbor_delete (struct ospf6_neig
+   ospf6_lsdb_delete (on->lsupdate_list);
+   ospf6_lsdb_delete (on->lsack_list);
+ 
++  if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++    ospf6_bfd_peer_delete (on);
++
+   THREAD_OFF (on->inactivity_timer);
+ 
+   THREAD_OFF (on->thread_send_dbdesc);
+@@ -552,8 +557,31 @@ inactivity_timer (struct thread *thread)
+   ospf6_neighbor_state_change (OSPF6_NEIGHBOR_DOWN, on);
+   thread_add_event (master, neighbor_change, on->ospf6_if, 0);
+ 
++  if (!CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++    {
+   listnode_delete (on->ospf6_if->neighbor_list, on);
+   ospf6_neighbor_delete (on);
++    }
++
++  return 0;
++}
++
++int
++ospf6_bfd_down (struct thread *thread)
++{
++  struct ospf6_neighbor *on;
++
++  on = (struct ospf6_neighbor *) THREAD_ARG (thread);
++  assert (on);
++
++  if (IS_OSPF6_DEBUG_NEIGHBOR (EVENT))
++    zlog_info ("Neighbor Event %s: *BFD Down*", on->name);
++
++  on->drouter = on->prev_drouter = 0;
++  on->bdrouter = on->prev_bdrouter = 0;
++
++  ospf6_neighbor_state_change (OSPF6_NEIGHBOR_DOWN, on);
++  thread_add_event (master, neighbor_change, on->ospf6_if, 0);
+ 
+   return 0;
+ }
+@@ -676,6 +704,9 @@ ospf6_neighbor_show_detail (struct vty *
+            on->ospf6_if->interface->name,
+            on->ospf6_if->interface->ifindex,
+            VNL);
++  if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++    vty_out (vty, "    BFD Enabled%s", VNL);
++
+   vty_out (vty, "    His IfIndex: %d Link-local address: %s%s",
+            on->ifindex, linklocal_addr,
+            VNL);
+diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_neighbor.h zebra-0.95a/ospf6d/ospf6_neighbor.h
+--- zebra-0.95a.orig/ospf6d/ospf6_neighbor.h	2004-01-10 02:18:22.000000000 +0900
++++ zebra-0.95a/ospf6d/ospf6_neighbor.h	2007-03-10 22:27:43.000000000 +0900
+@@ -93,6 +93,11 @@ struct ospf6_neighbor
+   struct thread *thread_send_lsreq;
+   struct thread *thread_send_lsupdate;
+   struct thread *thread_send_lsack;
++
++  /* State for BFD */
++#define OSPF6_NBR_BFD_ENABLE   0x01
++#define OSPF6_NBR_BFD_DOWN     0x02
++  u_char bfd_flag;
+ };
+ 
+ /* Neighbor state */
+@@ -129,6 +134,7 @@ int seqnumber_mismatch (struct thread *)
+ int bad_lsreq (struct thread *);
+ int oneway_received (struct thread *);
+ int inactivity_timer (struct thread *);
++int ospf6_bfd_down (struct thread *);
+ 
+ void ospf6_neighbor_init ();
+ int config_write_ospf6_debug_neighbor (struct vty *vty);
+diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_zebra.c zebra-0.95a/ospf6d/ospf6_zebra.c
+--- zebra-0.95a.orig/ospf6d/ospf6_zebra.c	2004-08-01 09:50:28.000000000 +0900
++++ zebra-0.95a/ospf6d/ospf6_zebra.c	2007-03-10 23:39:34.000000000 +0900
+@@ -28,6 +28,7 @@
+ #include "stream.h"
+ #include "zclient.h"
+ #include "memory.h"
++#include "thread.h"
+ 
+ #include "ospf6_proto.h"
+ #include "ospf6_top.h"
+@@ -36,6 +37,8 @@
+ #include "ospf6_lsa.h"
+ #include "ospf6_lsdb.h"
+ #include "ospf6_asbr.h"
++#include "ospf6_message.h"
++#include "ospf6_neighbor.h"
+ #include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+@@ -529,6 +532,109 @@ DEFUN (no_redistribute_ospf6,
+   return CMD_SUCCESS;
+ }
+ 
++int
++ospf6_bfd_peer_add (struct ospf6_neighbor *on)
++{
++  union sockunion su;
++  memset (&su, 0, sizeof (su));
++  su.sin6.sin6_family = AF_INET6;
++  memcpy (&su.sin6.sin6_addr, &on->linklocal_addr,
++		  sizeof (on->linklocal_addr));
++
++  zapi_bfd_peer_add (zclient, &su, 
++                     on->ospf6_if->interface->ifindex, 1);
++  return 0;
++}
++
++int
++ospf6_bfd_peer_delete (struct ospf6_neighbor *on)
++{
++  union sockunion su;
++  memset (&su, 0, sizeof (su));
++  su.sin6.sin6_family = AF_INET6;
++  memcpy (&su.sin6.sin6_addr, &on->linklocal_addr,
++		  sizeof (on->linklocal_addr));
++
++  zapi_bfd_peer_delete (zclient, &su, 
++                        on->ospf6_if->interface->ifindex, 1);
++  return 0;
++}
++
++int
++ospf6_bfd_peer_up (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf6_interface *oi;
++  struct ospf6_neighbor *on;
++  listnode i;
++  char buf[BUFSIZ];
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  oi = ospf6_interface_lookup_by_ifindex (ifindex);
++  if (!oi)
++	  return 0;
++
++  for (i = listhead (oi->neighbor_list); i; nextnode (i))
++    {
++      on = (struct ospf6_neighbor *) getdata (i);
++      if (IPV6_ADDR_SAME (&on->linklocal_addr, &su.sin6.sin6_addr))
++        {
++          UNSET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_DOWN);
++          zlog_info ("%s Detect BFD Up", 
++					 inet_ntop (AF_INET6, &su.sin6.sin6_addr, buf, BUFSIZ));
++          return 0;
++        }
++    }
++
++  return 0;
++}
++
++int
++ospf6_bfd_peer_down (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf6_interface *oi;
++  struct ospf6_neighbor *on;
++  listnode i;
++  char buf[BUFSIZ];
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  oi = ospf6_interface_lookup_by_ifindex (ifindex);
++  if (!oi)
++	  return 0;
++
++  for (i = listhead (oi->neighbor_list); i; nextnode (i))
++    {
++      on = (struct ospf6_neighbor *) getdata (i);
++      if (IPV6_ADDR_SAME (&on->linklocal_addr, &su.sin6.sin6_addr))
++        {
++          SET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_DOWN);
++          thread_add_event (master, ospf6_bfd_down, on, 0);
++          zlog_info ("%s Detect BFD Down", 
++					 inet_ntop (AF_INET6, &su.sin6.sin6_addr, buf, BUFSIZ));
++          return 0;
++        }
++    }
++
++  return 0;
++}
++
+ void
+ ospf6_zebra_init ()
+ {
+@@ -545,6 +651,8 @@ ospf6_zebra_init ()
+   zclient->ipv4_route_delete = NULL;
+   zclient->ipv6_route_add = ospf6_zebra_read_ipv6;
+   zclient->ipv6_route_delete = ospf6_zebra_read_ipv6;
++  zclient->bfd_peer_up = ospf6_bfd_peer_up;
++  zclient->bfd_peer_down = ospf6_bfd_peer_down;
+ 
+   /* redistribute connected route by default */
+   /* ospf6_zebra_redistribute (ZEBRA_ROUTE_CONNECT); */
+diff -upwbr zebra-0.95a.orig/ospf6d/ospf6_zebra.h zebra-0.95a/ospf6d/ospf6_zebra.h
+--- zebra-0.95a.orig/ospf6d/ospf6_zebra.h	2004-01-10 02:18:23.000000000 +0900
++++ zebra-0.95a/ospf6d/ospf6_zebra.h	2007-03-10 22:37:22.000000000 +0900
+@@ -49,5 +49,9 @@ void ospf6_zebra_init ();
+ int config_write_ospf6_debug_zebra (struct vty *vty);
+ void install_element_ospf6_debug_zebra ();
+ 
++struct ospf6_neighbor;
++int ospf6_bfd_peer_add (struct ospf6_neighbor *);
++int ospf6_bfd_peer_delete (struct ospf6_neighbor *);
++
+ #endif /*OSPF6_ZEBRA_H*/
+ 
+diff -upwbr zebra-0.95a.orig/ospfd/ospf_neighbor.h zebra-0.95a/ospfd/ospf_neighbor.h
+--- zebra-0.95a.orig/ospfd/ospf_neighbor.h	2003-03-22 17:07:32.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_neighbor.h	2007-03-10 00:39:29.000000000 +0900
+@@ -81,6 +81,9 @@ struct ospf_neighbor
+   /* Statistics Field */
+   u_int32_t state_change;
+   struct ospf_nbr_nbma *nbr_nbma;
++
++#define OSPF_NBR_BFD_DOWN     (1<<0)
++  u_char bfd_flag;
+ };
+ 
+ /* Macros. */
+diff -upwbr zebra-0.95a.orig/ospfd/ospf_nsm.c zebra-0.95a/ospfd/ospf_nsm.c
+--- zebra-0.95a.orig/ospfd/ospf_nsm.c	2003-03-22 17:07:32.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_nsm.c	2007-03-10 00:48:22.000000000 +0900
+@@ -47,6 +47,7 @@
+ #include "ospfd/ospf_dump.h"
+ #include "ospfd/ospf_flood.h"
+ #include "ospfd/ospf_abr.h"
++#include "ospfd/ospf_zebra.h"
+ 
+ void nsm_reset_nbr (struct ospf_neighbor *);
+ 
+@@ -456,8 +457,8 @@ nsm_kill_nbr (struct ospf_neighbor *nbr)
+     }
+ 
+   /* Delete neighbor from interface. */
+-  ospf_nbr_delete (nbr);
+-
++/*   ospf_bfd_peer_delete (nbr); */
++/*   ospf_nbr_delete (nbr); */
+   return 0;
+ }
+ 
+diff -upwbr zebra-0.95a.orig/ospfd/ospf_packet.c zebra-0.95a/ospfd/ospf_packet.c
+--- zebra-0.95a.orig/ospfd/ospf_packet.c	2005-06-21 09:58:24.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_packet.c	2007-03-10 00:45:03.000000000 +0900
+@@ -47,6 +47,7 @@
+ #include "ospfd/ospf_spf.h"
+ #include "ospfd/ospf_flood.h"
+ #include "ospfd/ospf_dump.h"
++#include "ospfd/ospf_zebra.h"
+ 
+ static void ospf_ls_ack_send_list (struct ospf_interface *, list,
+ 				   struct in_addr);
+@@ -748,6 +749,8 @@ ospf_hello (struct ip *iph, struct ospf_
+       nbr->state = NSM_Down;
+       nbr->src = iph->ip_src;
+       nbr->address = p;
++	  /* Register BFD Detection */
++	  ospf_bfd_peer_add (nbr);
+ 
+       rn->info = nbr;
+ 
+@@ -789,6 +792,10 @@ ospf_hello (struct ip *iph, struct ospf_
+ 
+   old_state = nbr->state;
+ 
++  if (CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN)){
++	  return;
++  }
++
+   /* Add event to thread. */
+   OSPF_NSM_EVENT_EXECUTE (nbr, NSM_HelloReceived);
+ 
+diff -upwbr zebra-0.95a.orig/ospfd/ospf_zebra.c zebra-0.95a/ospfd/ospf_zebra.c
+--- zebra-0.95a.orig/ospfd/ospf_zebra.c	2004-01-10 02:18:23.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_zebra.c	2007-03-10 01:12:00.000000000 +0900
+@@ -47,6 +47,9 @@
+ #ifdef HAVE_SNMP
+ #include "ospfd/ospf_snmp.h"
+ #endif /* HAVE_SNMP */
++#include "ospfd/ospf_lsdb.h"
++#include "ospfd/ospf_neighbor.h"
++#include "ospfd/ospf_nsm.h"
+ 
+ /* Zebra structure to hold current status. */
+ struct zclient *zclient = NULL;
+@@ -1118,6 +1121,100 @@ ospf_distance_apply (struct prefix_ipv4 
+   return 0;
+ }
+ 
++
++int
++ospf_bfd_peer_add (struct ospf_neighbor *nbr)
++{
++  union sockunion su;
++  su.sin.sin_family = AF_INET;
++  su.sin.sin_addr = nbr->src;
++
++  zapi_bfd_peer_add (zclient, &su, nbr->oi->ifp->ifindex, 1);
++  return 0;
++}
++
++int
++ospf_bfd_peer_delete (struct ospf_neighbor *nbr)
++{
++  union sockunion su;
++  su.sin.sin_family = AF_INET;
++  su.sin.sin_addr = nbr->src;
++
++  zapi_bfd_peer_delete (zclient, &su, nbr->oi->ifp->ifindex, 1);
++  return 0;
++}
++
++int
++ospf_bfd_peer_up (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf *ospf;
++  struct ospf_interface *oi;
++  struct ospf_neighbor *nbr;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  ospf = ospf_lookup ();
++  if (!ospf)
++	  return 0;
++
++  oi = ospf_if_lookup_recv_if (ospf, su.sin.sin_addr);
++  if (!oi)
++	  return 0;
++
++  nbr = ospf_nbr_lookup_by_addr (oi->nbrs, &su.sin.sin_addr);
++  if (nbr){
++	  UNSET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN);
++  }
++
++  zlog_info ("%s Detect BFD Up", inet_ntoa (su.sin.sin_addr));
++  return 0;
++}
++
++int
++ospf_bfd_peer_down (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf *ospf;
++  struct ospf_interface *oi;
++  struct ospf_neighbor *nbr;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  ospf = ospf_lookup ();
++  if (!ospf)
++	  return 0;
++
++  oi = ospf_if_lookup_recv_if (ospf, su.sin.sin_addr);
++  if (!oi)
++	  return 0;
++
++  nbr = ospf_nbr_lookup_by_addr (oi->nbrs, &su.sin.sin_addr);
++  if (nbr){
++	  SET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN);
++	  OSPF_NSM_EVENT_EXECUTE (nbr, NSM_KillNbr);
++  }
++
++  zlog_info ("%s Detect BFD Down", inet_ntoa (su.sin.sin_addr));
++
++  return 0;
++}
++
++
+ void
+ ospf_zebra_init ()
+ {
+@@ -1132,6 +1229,8 @@ ospf_zebra_init ()
+   zclient->interface_address_delete = ospf_interface_address_delete;
+   zclient->ipv4_route_add = ospf_zebra_read_ipv4;
+   zclient->ipv4_route_delete = ospf_zebra_read_ipv4;
++  zclient->bfd_peer_up = ospf_bfd_peer_up;
++  zclient->bfd_peer_down = ospf_bfd_peer_down;
+ 
+   access_list_add_hook (ospf_filter_update);
+   access_list_delete_hook (ospf_filter_update);
+diff -upwbr zebra-0.95a.orig/ospfd/ospf_zebra.h zebra-0.95a/ospfd/ospf_zebra.h
+--- zebra-0.95a.orig/ospfd/ospf_zebra.h	2003-03-29 04:55:29.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_zebra.h	2007-03-09 01:18:23.000000000 +0900
+@@ -70,6 +70,8 @@ void ospf_routemap_set (struct ospf *, i
+ void ospf_routemap_unset (struct ospf *, int);
+ int ospf_distance_set (struct vty *, struct ospf *, char *, char *, char *);
+ int ospf_distance_unset (struct vty *, struct ospf *, char *, char *, char *);
++int ospf_bfd_peer_add (struct ospf_neighbor *);
++int ospf_bfd_peer_delete (struct ospf_neighbor *);
+ void ospf_zebra_init ();
+ 
+ #endif /* _ZEBRA_OSPF_ZEBRA_H */
+diff -upwbr zebra-0.95a.orig/ospfd/ospfd.c zebra-0.95a/ospfd/ospfd.c
+--- zebra-0.95a.orig/ospfd/ospfd.c	2004-01-10 02:18:23.000000000 +0900
++++ zebra-0.95a/ospfd/ospfd.c	2007-03-09 01:18:46.000000000 +0900
+@@ -33,6 +33,7 @@ Software Foundation, Inc., 59 Temple Pla
+ #include "sockunion.h"          /* for inet_aton () */
+ #include "zclient.h"
+ #include "plist.h"
++#include "sockunion.h"
+ 
+ #include "ospfd/ospfd.h"
+ #include "ospfd/ospf_network.h"
+@@ -1392,6 +1393,7 @@ ospf_nbr_nbma_add (struct ospf_nbr_nbma 
+ 
+       nbr_nbma->nbr = nbr;
+ 
++	  ospf_bfd_peer_add (nbr);
+       OSPF_NSM_EVENT_EXECUTE (nbr, NSM_Start);
+     }
+ }
+diff -upwbr zebra-0.95a.orig/zebra/Makefile.am zebra-0.95a/zebra/Makefile.am
+--- zebra-0.95a.orig/zebra/Makefile.am	2004-04-29 01:05:31.000000000 +0900
++++ zebra-0.95a/zebra/Makefile.am	2007-02-26 22:59:24.000000000 +0900
+@@ -22,7 +22,7 @@ sbin_PROGRAMS = zebra
+ zebra_SOURCES = \
+ 	zserv.c main.c interface.c connected.c ioctl.c zebra_rib.c \
+ 	redistribute.c debug.c rtadv.c zebra_snmp.c zebra_vty.c \
+-	irdp_main.c irdp_interface.c irdp_packet.c
++	irdp_main.c irdp_interface.c irdp_packet.c bfd_netlink.c
+ 
+ noinst_HEADERS = \
+ 	connected.h ioctl.h rib.h rt.h zserv.h redistribute.h debug.h rtadv.h \
+diff -upwbr zebra-0.95a.orig/zebra/main.c zebra-0.95a/zebra/main.c
+--- zebra-0.95a.orig/zebra/main.c	2004-04-29 01:05:31.000000000 +0900
++++ zebra-0.95a/zebra/main.c	2007-02-26 23:32:50.000000000 +0900
+@@ -35,6 +35,7 @@
+ #include "zebra/zserv.h"
+ #include "zebra/debug.h"
+ #include "zebra/rib.h"
++#include "zebra/netlink.h"
+ 
+ /* Master of threads. */
+ struct thread_master *master;
+@@ -275,6 +276,7 @@ main (int argc, char **argv)
+   kernel_init ();
+   interface_list ();
+   route_read ();
++  bfd_netlink_init();
+ 
+   /* Sort VTY commands. */
+   sort_node ();
+diff -upwbr zebra-0.95a.orig/zebra/rt_netlink.c zebra-0.95a/zebra/rt_netlink.c
+--- zebra-0.95a.orig/zebra/rt_netlink.c	2005-04-13 14:11:49.000000000 +0900
++++ zebra-0.95a/zebra/rt_netlink.c	2007-03-08 01:40:02.000000000 +0900
+@@ -38,17 +38,11 @@
+ #include "zebra/redistribute.h"
+ #include "zebra/interface.h"
+ #include "zebra/debug.h"
++#include "zebra/netlink.h"
+ 
+-/* Socket interface to kernel */
+-struct nlsock
+-{
+-  int sock;
+-  int seq;
+-  struct sockaddr_nl snl;
+-  char *name;
+-} netlink =	{ -1, 0, {0}, "netlink-listen" },	/* kernel messages */
+-  netlink_cmd = { -1, 0, {0}, "netlink-cmd" },          /* command channel */
+-  netlink_addr = {-1, 0, {0}, "netlink-addr" };		/* address channel */
++struct nlsock netlink =	{ -1, 0, {0}, "netlink-listen" };	/* kernel messages */
++struct nlsock netlink_cmd = { -1, 0, {0}, "netlink-cmd" };      /* command channel */
++struct nlsock netlink_addr = {-1, 0, {0}, "netlink-addr" };		/* address channel */
+ 
+ struct message nlmsg_str[] =
+ {
+@@ -165,7 +159,7 @@ netlink_request (int family, int type, s
+ 
+ /* Receive message from netlink interface and pass those information
+    to the given function. */
+-static int
++int
+ netlink_parse_info (int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
+ 		    struct nlsock *nl)
+ {
+diff -upwbr zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zserv.c
+--- zebra-0.95a.orig/zebra/zserv.c	2003-02-21 08:27:24.000000000 +0900
++++ zebra-0.95a/zebra/zserv.c	2007-03-03 14:59:58.000000000 +0900
+@@ -38,6 +38,7 @@
+ #include "zebra/redistribute.h"
+ #include "zebra/debug.h"
+ #include "zebra/ipforward.h"
++#include "zebra/bfd_netlink.h"
+ 
+ /* Event list of zebra. */
+ enum event { ZEBRA_SERV, ZEBRA_READ, ZEBRA_WRITE };
+@@ -73,7 +74,11 @@ char *zebra_command_str [] =
+   "ZEBRA_IPV4_NEXTHOP_LOOKUP",
+   "ZEBRA_IPV6_NEXTHOP_LOOKUP",
+   "ZEBRA_IPV4_IMPORT_LOOKUP",
+-  "ZEBRA_IPV6_IMPORT_LOOKUP"
++  "ZEBRA_IPV6_IMPORT_LOOKUP",
++  "ZEBRA_BFD_PEER_ADD",
++  "ZEBRA_BFD_PEER_DELETE",
++  "ZEBRA_BFD_PEER_UP",
++  "ZEBRA_BFD_PEER_DOWN",
+ };
+ 
+ struct zebra_message_queue
+@@ -983,6 +988,67 @@ zsend_ipv4_import_lookup (struct zserv *
+   return 0;
+ }
+ 
++int
++zsend_bfd_peer_up (struct zserv *client, struct bfd_peer *peer)
++{
++  struct stream *s;
++
++  /* Check this client need interface information. */
++  if (! client->ifinfo)
++    return -1;
++
++  s = client->obuf;
++  stream_reset (s);
++
++  /* Place holder for size. */
++  stream_putw (s, 0);
++
++  /* Zebra command. */
++  stream_putc (s, ZEBRA_BFD_PEER_UP);
++
++  /* BFD peer information. */
++  stream_put (s, &peer->su, sizeof(union sockunion));
++  stream_putl (s, peer->ifindex);
++
++  /* Write packet size. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  zebra_server_send_message (client->sock, s->data, stream_get_endp (s));
++
++  return 0;
++}
++
++int
++zsend_bfd_peer_down (struct zserv *client, struct bfd_peer *peer)
++{
++  struct stream *s;
++
++  /* Check this client need interface information. */
++  if (! client->ifinfo)
++    return -1;
++
++  s = client->obuf;
++  stream_reset (s);
++
++  /* Place holder for size. */
++  stream_putw (s, 0);
++
++  /* Zebra command. */
++  stream_putc (s, ZEBRA_BFD_PEER_DOWN);
++
++  /* BFD peer information. */
++  stream_put (s, &peer->su, sizeof(union sockunion));
++  stream_putl (s, peer->ifindex);
++
++  /* Write packet size. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  zebra_server_send_message (client->sock, s->data, stream_get_endp (s));
++
++  return 0;
++}
++
++
+ /* Register zebra server interface information.  Send current all
+    interface and address information. */
+ void
+@@ -1379,6 +1445,54 @@ zread_ipv6_nexthop_lookup (struct zserv 
+ }
+ #endif /* HAVE_IPV6 */
+ 
++/* bfd peer add function(from protocol => zebra => kernel) */
++void
++zread_bfd_peer_add (struct zserv *client, u_short length)
++{
++  struct bfd_peer peer;
++  struct stream *s;
++
++  /* Get input stream.  */
++  s = client->ibuf;
++
++  memset (&peer, 0, sizeof (struct bfd_peer));
++
++  /* sockunion(peer address) */
++  stream_get (&peer.su, s, sizeof (union sockunion));
++  /* ifindex */
++  peer.ifindex = stream_getl (s);
++  /* application id(pending) */
++  peer.appid = 0;
++  /* peer type */
++  peer.type = stream_getc (s);
++
++  kernel_bfd_add_peer (&peer);
++}
++
++/* bfd peer delete function(from protocol => zebra => kernel) */
++void
++zread_bfd_peer_delete (struct zserv *client, u_short length)
++{
++  struct bfd_peer peer;
++  struct stream *s;
++
++  /* Get input stream.  */
++  s = client->ibuf;
++
++  memset (&peer, 0, sizeof (struct bfd_peer));
++
++  /* sockunion(peer address) */
++  stream_get (&peer.su, s, sizeof (union sockunion));
++  /* ifindex */
++  peer.ifindex = stream_getl (s);
++  /* application id(pending) */
++  peer.appid = 0;
++  /* peer type */
++  peer.type = stream_getc (s);
++
++  kernel_bfd_delete_peer (&peer);
++}
++
+ /* Close zebra client. */
+ void
+ zebra_client_close (struct zserv *client)
+@@ -1533,6 +1647,12 @@ zebra_client_read (struct thread *thread
+     case ZEBRA_IPV4_IMPORT_LOOKUP:
+       zread_ipv4_import_lookup (client, length);
+       break;
++	case ZEBRA_BFD_PEER_ADD:
++		zread_bfd_peer_add (client, length);
++		break;
++	case ZEBRA_BFD_PEER_DELETE:
++		zread_bfd_peer_delete (client, length);
++		break;
+     default:
+       zlog_info ("Zebra received unknown command %d", command);
+       break;
+diff -upwbr zebra-0.95a.orig/zebra/zserv.h zebra-0.95a/zebra/zserv.h
+--- zebra-0.95a.orig/zebra/zserv.h	2001-01-16 08:25:24.000000000 +0900
++++ zebra-0.95a/zebra/zserv.h	2007-03-03 15:02:07.000000000 +0900
+@@ -22,6 +22,8 @@
+ #ifndef _ZEBRA_ZSERV_H
+ #define _ZEBRA_ZSERV_H
+ 
++#include "zebra/bfd_netlink.h"
++
+ /* Default port information. */
+ #define ZEBRA_PORT                    2600
+ #define ZEBRA_VTY_PORT                2601
+@@ -126,6 +128,9 @@ zsend_ipv6_delete_multipath (struct zser
+ 
+ #endif /* HAVE_IPV6 */
+ 
++int zsend_bfd_peer_up (struct zserv *, struct bfd_peer *);
++int zsend_bfd_peer_down (struct zserv *, struct bfd_peer *);
++
+ extern pid_t pid;
+ extern pid_t old_pid;
+ 
+zebra-0.95a/zebraだけに発見: zserv.h~
+zebra-0.95a/zebraだけに発見: zserv.o

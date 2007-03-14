@@ -1,2 +1,17 @@
 
-It need kernel version linux-2.6.16 at least.
+kbfd is BFD(Bidirectional Forwarding Detection) implementation in Linux Kernel Module.
+
+- Requirement
+linux kernel version linux-2.6.16 source tree at least.
+
+- Tested environment
+  Linux 2.6.17(SMP) on vmware Celeron 2.66GHz with 100M ether
+  Linux 2.6.16.42(PREEMPT) on Celeron 450MHz with 802.11 wlan
+
+- How to use
+  svn co https://kbfd.svn.sourceforge.net/svnroot/kbfd/
+  cd kbfd
+  make
+  sudo insmod kbfd.ko
+
+
