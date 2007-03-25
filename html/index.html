@@ -1,0 +1,86 @@
+<html>
+<title>
+kbfd
+</title>
+<body> 
+
+<center>
+<h1 fgcolor="0xFF0000"> kbfd  </h1>
+</center>
+
+<div align=right>Last Update $Date/div>
+<p>
+kbfd is BFD(Bidirectional Forwarding Detection) implementation 
+in Linux Kernel Module.
+</p>
+
+<p>
+It is available patch for zebra-0.95a. <br/>
+(quagga's patch also avaliable soon.)<br><br>
+
+This could be control kbfd and utilize for ospfd/ospf6d/bgpd to use
+bfd fast failure detection.
+</p>
+
+<ul>
+<li> base specification
+<ul>
+<li>draft-ietf-bfd-base-05.txt
+<li>draft-ietf-bfd-v4v6-1hop-05.txt
+<li>draft-ietf-bfd-generic-02.txt
+</ul>
+
+<li>(future plan)
+<ul>
+<li> draft-ietf-bfd-multihop-04.txt 
+<li> draft-ietf-bfd-mib-03.txt 
+</ul>
+</ul>
+
+<ul>
+<li> Requirement
+<ul>
+<li>  linux kernel version linux-2.6.16 source tree at least.
+<li>  CONFIG_IPV6 or ipv6.ko(in case module build)
+</ul>
+</ul>
+
+<ul> Download
+<li> <a href="http://sourceforge.net/project/showfiles.php?group_id=190276&package_id=223277&release_id=496283"> kbfd-0.1.tar.gz</a>
+<li> <a href="http://sourceforge.net/project/showfiles.php?group_id=190276&package_id=226271"> kbfd-0.1-zebra-0.95a.patch.gz </a>
+</ul>
+
+<ul>
+<li> How to INSTALL
+<pre>
+  tar xfz kbfd-$(VERSION).tar.gz
+  cd kbfd
+  make
+  sudo make install
+</pre>
+
+<li> How to build zebra with bfd-enabled
+<pre>
+  cd kbfd
+  make zebra
+</pre>
+
+<li> How to run kbfd
+<pre>
+  sudo modprobe kbfd
+</pre>
+
+<li> How to use zebra with enable-bfd
+<pre>
+  ip ospf bfd-enable
+  ipv6 ospf bfd-enable
+  neighbor (A.B.C.D|X:X::X:X) bfd-enable
+  show bfd neighbors
+</pre>
+</ul>
+
+<hr>
+<a href="http://sourceforge.net/projects/kbfd"> Project Page</a> <br>
+<a href="http://sourceforge.net"><img src="http://sflogo.sourceforge.net/sflogo.php?group_id=1900276&amp;type=4" width=125 height=37 border=0 alt="SourceForge.net Logo"/></a>
+</body>
+</html>
