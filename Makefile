@@ -45,8 +45,9 @@ zebra:
 	make
 
 dist:
-	mkdir -p kbfd
+	mkdir -p kbfd/patches
 	cp -fr $(DIST_FILES) kbfd/
+	cp patches/kbfd-zebra-0.95a.patch kbfd/patches/kbfd-$(VERSION)-zebra-0.95a.patch 
 	tar cfz kbfd-$(VERSION).tar.gz kbfd/
 	rm -rf kbfd/
 	cp patches/kbfd-zebra-0.95a.patch kbfd-$(VERSION)-zebra-0.95a.patch 
