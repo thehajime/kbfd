@@ -44,7 +44,7 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
 	struct sched_param param;
 	static int init = 0;
 
-	/* Set scheduler */
+	/* Set scheduler(FIXME) */
 	if (init == 0){
 		param.sched_priority = MAX_RT_PRIO - 1;
 		sched_setscheduler(current, SCHED_FIFO, &param);

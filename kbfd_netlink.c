@@ -57,6 +57,14 @@ bfd_peer_fill_info(struct sk_buff *skb, struct bfd_session *bfd,
 	peer->my_disc = bfd->cpkt.my_disc;
 	peer->your_disc = bfd->cpkt.your_disc;
 
+    /* counter */
+	peer->pkt_in = bfd->pkt_in;
+	peer->pkt_out = bfd->pkt_out;
+	peer->last_up = bfd->last_up;
+	peer->last_down = bfd->last_down;
+	peer->up_cnt = bfd->up_cnt;
+	peer->last_discont = bfd->last_discont;
+
 	nlh->nlmsg_len = skb->tail - b;
 	return skb->len;
 
@@ -67,7 +75,7 @@ blog_info("nlmsg_failure");
 }
 
 static int
-bfd_peer_summary_dump(struct sk_buff *skb, struct netlink_callback *cb)
+bfd_peer_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct bfd_session *bfd;
 	struct bfd_nl_peerinfo *peer = NLMSG_DATA(cb->nlh);
@@ -108,11 +116,6 @@ bfd_peer_summary_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	return skb->len;
 }
 
-static int
-bfd_peer_detail_dump(struct sk_buff *skb, struct netlink_callback *cb)
-{
-	return 0;
-}
 
 #if 0
 static int test_done(struct netlink_callback *cb)
@@ -162,15 +165,8 @@ bfd_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 			break;
 		}
 		return netlink_dump_start(bfd_nls, skb, nlh,
-								  bfd_peer_summary_dump, NULL);
+								  bfd_peer_dump, NULL);
 		break;
-	case BFD_GETPEERSTAT:
-		if (!nlh->nlmsg_flags&NLM_F_DUMP) {
-			err =  EINVAL;
-			break;
-		}
-		return netlink_dump_start(bfd_nls, skb, nlh,
-								  bfd_peer_detail_dump, NULL);
 	case BFD_ADMINDOWN:
 		break;
 	case BFD_SETLINK:
@@ -179,6 +175,11 @@ bfd_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 		if (link){
 			struct bfd_interface *bif = bfd_interface_get(link->ifindex);
 			if (bif){
+                blog_debug("BFD_SETLINK: if=%s mintx=%d, minrx=%d, mult=%d",
+                           bif->name,
+                           link->mintx,
+                           link->minrx,
+                           link->mult);
 				bif->v_mintx = link->mintx;
 				bif->v_minrx = link->minrx;
 				bif->v_mult = link->mult;

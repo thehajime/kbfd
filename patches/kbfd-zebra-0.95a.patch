@@ -1,6 +1,6 @@
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_fsm.c zebra-0.95a/bgpd/bgp_fsm.c
 --- zebra-0.95a.orig/bgpd/bgp_fsm.c	2004-12-28 14:10:45.000000000 +0900
-+++ zebra-0.95a/bgpd/bgp_fsm.c	2007-03-03 15:14:56.000000000 +0900
++++ zebra-0.95a/bgpd/bgp_fsm.c	2007-03-14 11:28:44.000000000 +0900
 @@ -40,6 +40,7 @@ Software Foundation, Inc., 59 Temple Pla
  #include "bgpd/bgp_route.h"
  #include "bgpd/bgp_dump.h"
@@ -9,7 +9,27 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_fsm.c zebra-0.95a/bgpd/bg
  #ifdef HAVE_SNMP
  #include "bgpd/bgp_snmp.h"
  #endif /* HAVE_SNMP */
-@@ -441,7 +442,8 @@ char *peer_down_str[] =
+@@ -86,6 +87,8 @@ bgp_timer_set (struct peer *peer)
+ 	 inactive.  All other timer must be turned off */
+       if (CHECK_FLAG (peer->flags, PEER_FLAG_SHUTDOWN)
+ 	  || CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW)
++      || (CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE) &&
++          CHECK_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN))
+ 	  || ! peer_active (peer))
+ 	{
+ 	  BGP_TIMER_OFF (peer->t_start);
+@@ -241,6 +244,10 @@ bgp_start_timer (struct thread *thread)
+   peer = THREAD_ARG (thread);
+   peer->t_start = NULL;
+ 
++  if (CHECK_FLAG (peer->sflags, PEER_STATUS_CREATE_INIT))
++    if (CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE))
++      bgp_bfd_peer_add (&peer->su, 0, 1);
++
+   UNSET_FLAG (peer->sflags, PEER_STATUS_CREATE_INIT);
+ 
+   if (BGP_DEBUG (fsm, FSM))
+@@ -441,7 +448,8 @@ char *peer_down_str[] =
    "Capability changed",
    "Multihop config change",
    "Password change",
@@ -19,21 +39,86 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_fsm.c zebra-0.95a/bgpd/bg
  };
  
  int
-@@ -917,6 +919,10 @@ bgp_establish (struct peer *peer)
+@@ -917,6 +925,11 @@ bgp_establish (struct peer *peer)
    /* Reset uptime, send keepalive, send current table. */
    bgp_uptime_reset (peer);
  
 +  /* Setup bfd failure detection */
-+  if (peer->established == 1)
++  if (peer->established == 1 && 
++      CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE))
 +	  bgp_bfd_peer_add (&peer->su, 0, 1);
 +
    /* Send route-refresh when ORF is enabled */
    for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
      for (safi = SAFI_UNICAST ; safi < SAFI_MAX ; safi++)
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_vty.c zebra-0.95a/bgpd/bgp_vty.c
+--- zebra-0.95a.orig/bgpd/bgp_vty.c	2005-01-07 13:36:08.000000000 +0900
++++ zebra-0.95a/bgpd/bgp_vty.c	2007-03-14 09:30:19.000000000 +0900
+@@ -3686,6 +3686,29 @@ DEFUN (no_neighbor_allowas_in,
+   return bgp_vty_return (vty, ret);
+ }
+ 
++/* "neighbor bfd-enable" */
++DEFUN (neighbor_bfd_enable,
++       neighbor_bfd_enable_cmd,
++       NEIGHBOR_CMD2 "bfd-enable",
++       NEIGHBOR_STR
++       NEIGHBOR_ADDR_STR2
++       "Enable BFD Fast Detection on this neighbor\n")
++{
++  return peer_flag_set_vty (vty, argv[0], PEER_FLAG_BFD_ENABLE);
++}
++
++DEFUN (no_neighbor_bfd_enable,
++       no_neighbor_bfd_enable_cmd,
++       NO_NEIGHBOR_CMD2 "bfd-enable",
++       NO_STR
++       NEIGHBOR_STR
++       NEIGHBOR_ADDR_STR2
++       "Enable BFD Fast Detection on this neighbor\n")
++{
++  return peer_flag_unset_vty (vty, argv[0], PEER_FLAG_BFD_ENABLE);
++}
++
++
+ /* Address family configuration.  */
+ DEFUN (address_family_ipv4,
+        address_family_ipv4_cmd,
+@@ -6154,6 +6177,8 @@ bgp_show_summary (struct vty *vty, struc
+ 		vty_out (vty, " Idle (Admin)");
+ 	      else if (CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW))
+ 		vty_out (vty, " Idle (PfxCt)");
++	      else if (CHECK_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN))
++		vty_out (vty, " Idle (Bfd)");
+ 	      else
+ 		vty_out (vty, " %-11s", LOOKUP(bgp_status_msg, peer->status));
+ 	    }
+@@ -6632,6 +6657,10 @@ bgp_show_peer (struct vty *vty, struct p
+   if (CHECK_FLAG (p->flags, PEER_FLAG_SHUTDOWN))
+     vty_out (vty, " Administratively shut down%s", VTY_NEWLINE);
+ 
++  /* BFD Down detection. */
++  if (CHECK_FLAG (p->sflags, PEER_FLAG_SHUTDOWN))
++    vty_out (vty, " BFD Failure%s", VTY_NEWLINE);
++
+   /* BGP Version. */
+   vty_out (vty, "  BGP version 4");
+   vty_out (vty, ", remote router ID %s%s", 
+@@ -8502,6 +8531,10 @@ bgp_vty_init ()
+   install_element (BGP_VPNV4_NODE, &neighbor_allowas_in_arg_cmd);
+   install_element (BGP_VPNV4_NODE, &no_neighbor_allowas_in_cmd);
+ 
++  /* "neighbor bfd-enable" */
++  install_element (BGP_NODE, &neighbor_bfd_enable_cmd);
++  install_element (BGP_NODE, &no_neighbor_bfd_enable_cmd);
++
+   /* address-family commands. */
+   install_element (BGP_NODE, &address_family_ipv4_cmd);
+   install_element (BGP_NODE, &address_family_ipv4_safi_cmd);
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/bgp_zebra.c
 --- zebra-0.95a.orig/bgpd/bgp_zebra.c	2004-07-20 14:08:17.000000000 +0900
-+++ zebra-0.95a/bgpd/bgp_zebra.c	2007-03-03 15:28:26.000000000 +0900
-@@ -345,6 +345,68 @@ zebra_read_ipv6 (int command, struct zcl
++++ zebra-0.95a/bgpd/bgp_zebra.c	2007-03-14 09:24:42.000000000 +0900
+@@ -345,6 +345,81 @@ zebra_read_ipv6 (int command, struct zcl
  }
  #endif /* HAVE_IPV6 */
  
@@ -57,6 +142,9 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/
 +  struct stream *s;
 +  union sockunion su;
 +  int ifindex;
++  struct peer *peer;
++  struct bgp *bgp;
++  struct listnode *nn;
 +
 +  s = zclient->ibuf;
 +
@@ -64,6 +152,16 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/
 +  stream_get (&su, s, sizeof (union sockunion));
 +  /* ifindex */
 +  ifindex = stream_getl (s);
++
++  LIST_LOOP (bm->bgp, bgp, nn){
++	  peer = peer_lookup (bgp, &su);
++	  if (!peer)
++		  continue;
++
++	  zlog_info ("Detect BFD Peer Up %s", sockunion_log (&su));
++	  BGP_EVENT_ADD (peer, BGP_Start);
++      UNSET_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN);
++  }
 +
 +  return 0;
 +}
@@ -85,7 +183,6 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/
 +  /* ifindex */
 +  ifindex = stream_getl (s);
 +
-+
 +  LIST_LOOP (bm->bgp, bgp, nn){
 +	  peer = peer_lookup (bgp, &su);
 +	  if (!peer)
@@ -93,6 +190,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/
 +
 +	  zlog_info ("Detect BFD Peer Down %s", sockunion_log (&su));
 +	  BGP_EVENT_ADD (peer, BGP_Stop);
++      SET_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN);
 +	  peer->last_reset = PEER_DOWN_BFD_SESSION_DOWN;
 +  }
 +
@@ -102,7 +200,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.c zebra-0.95a/bgpd/
  struct interface *
  if_lookup_by_ipv4 (struct in_addr *addr)
  {
-@@ -995,6 +1057,8 @@ bgp_zebra_init (int enable)
+@@ -995,6 +1070,8 @@ bgp_zebra_init (int enable)
    zclient->ipv6_route_add = zebra_read_ipv6;
    zclient->ipv6_route_delete = zebra_read_ipv6;
  #endif /* HAVE_IPV6 */
@@ -123,22 +221,77 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgp_zebra.h zebra-0.95a/bgpd/
 +int bgp_bfd_peer_delete (union sockunion *, int, u_char);
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgpd.c zebra-0.95a/bgpd/bgpd.c
 --- zebra-0.95a.orig/bgpd/bgpd.c	2005-01-07 13:36:08.000000000 +0900
-+++ zebra-0.95a/bgpd/bgpd.c	2007-03-03 15:42:32.000000000 +0900
-@@ -1304,6 +1304,10 @@ peer_delete (struct peer *peer)
++++ zebra-0.95a/bgpd/bgpd.c	2007-03-14 10:11:49.000000000 +0900
+@@ -1304,6 +1304,11 @@ peer_delete (struct peer *peer)
        bgp_fsm_change_status (peer, Idle);
      }
  
 +  /* Unregister bfd failure detection */
-+  if (!CHECK_FLAG (peer->sflags, PEER_STATUS_ACCEPT_PEER))
++  if (!CHECK_FLAG (peer->sflags, PEER_STATUS_ACCEPT_PEER) &&
++      CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE))
 +	  bgp_bfd_peer_delete (&peer->su, 0, 1);
 +
    /* Stop all timers. */
    BGP_TIMER_OFF (peer->t_start);
    BGP_TIMER_OFF (peer->t_connect);
+@@ -2081,6 +2086,7 @@ struct peer_flag_action peer_flag_action
+     { PEER_FLAG_STRICT_CAP_MATCH,         0, peer_change_none },
+     { PEER_FLAG_DYNAMIC_CAPABILITY,       0, peer_change_reset },
+     { PEER_FLAG_DISABLE_CONNECTED_CHECK,  0, peer_change_reset },
++    { PEER_FLAG_BFD_ENABLE,               0, peer_change_reset },
+     { 0, 0, 0 }
+   };
+ 
+@@ -2181,6 +2187,14 @@ peer_flag_modify_action (struct peer *pe
+ 	  BGP_EVENT_ADD (peer, BGP_Start);
+ 	}
+     }
++  else if (flag == PEER_FLAG_BFD_ENABLE)
++    {
++      /* if flag unset */
++      if (!CHECK_FLAG (peer->flags, flag))
++        bgp_bfd_peer_delete (&peer->su, 0, 1);
++      else
++        bgp_bfd_peer_add (&peer->su, 0, 1);
++    }
+   else if (peer->status == Established)
+     {
+       if (flag == PEER_FLAG_DYNAMIC_CAPABILITY)
+@@ -4450,6 +4464,13 @@ bgp_config_write_peer_global (struct vty
+     if (! peer_group_member (peer) ||
+ 	! CHECK_FLAG (group->flags, PEER_FLAG_STRICT_CAP_MATCH))
+       vty_out (vty, " neighbor %s strict-capability-match%s", addr, VTY_NEWLINE);
++
++  /* bfd function. */
++  if (CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE))
++    if (! peer_group_member (peer) ||
++	! CHECK_FLAG (group->flags, PEER_FLAG_BFD_ENABLE))
++      vty_out (vty, " neighbor %s bfd-enable%s", addr, VTY_NEWLINE);
++
+ }
+ 
+ void
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgpd.h zebra-0.95a/bgpd/bgpd.h
 --- zebra-0.95a.orig/bgpd/bgpd.h	2005-08-05 19:18:33.000000000 +0900
-+++ zebra-0.95a/bgpd/bgpd.h	2007-03-03 15:14:36.000000000 +0900
-@@ -496,6 +496,7 @@ struct peer
++++ zebra-0.95a/bgpd/bgpd.h	2007-03-14 09:20:50.000000000 +0900
+@@ -328,7 +328,7 @@ struct peer
+ #define PEER_FLAG_DISABLE_CONNECTED_CHECK   (1 << 7) /* disable-connected-check */
+ #define PEER_FLAG_LOCAL_AS_NO_PREPEND       (1 << 8) /* local-as no-prepend */
+ #define PEER_FLAG_PASSWORD                  (1 << 9) /* password */
+-
++#define PEER_FLAG_BFD_ENABLE                (1 << 10) /* bfd-enable */
+   /* NSF mode (graceful restart) */
+   u_char nsf[AFI_MAX][SAFI_MAX];
+ 
+@@ -376,6 +376,7 @@ struct peer
+ #define PEER_STATUS_CREATE_INIT       (1 << 5) /* peer create init */
+ #define PEER_STATUS_NSF_MODE          (1 << 6) /* NSF aware peer */
+ #define PEER_STATUS_NSF_WAIT          (1 << 7) /* wait comeback peer */
++#define PEER_STATUS_BFD_DOWN          (1 << 8) /* detect bfd failure */
+ 
+   /* Peer status af flags (reset in bgp_stop) */
+   u_int16_t af_sflags[AFI_MAX][SAFI_MAX];
+@@ -496,6 +497,7 @@ struct peer
  #define PEER_DOWN_MULTIHOP_CHANGE       20 /* neighbor multihop command */
  #define PEER_DOWN_PASSWORD_CHANGE       21 /* neighbor password command */
  #define PEER_DOWN_NSF_CLOSE_SESSION     22 /* NSF tcp session close */
@@ -146,9 +299,32 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/bgpd/bgpd.h zebra-0.95a/bgpd/bgpd.
  
    /* The kind of route-map Flags.*/
    u_char rmap_type;
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/memory.h zebra-0.95a/lib/memory.h
+--- zebra-0.95a.orig/lib/memory.h	2005-04-13 14:11:49.000000000 +0900
++++ zebra-0.95a/lib/memory.h	2007-03-14 03:41:35.000000000 +0900
+@@ -186,6 +186,8 @@ enum
+   MTYPE_VRF,
+   MTYPE_VRF_NAME,
+ 
++  MTYPE_BFD_PEER,
++
+   MTYPE_MAX
+ };
+ 
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/sockunion.h zebra-0.95a/lib/sockunion.h
+--- zebra-0.95a.orig/lib/sockunion.h	2001-10-25 18:12:24.000000000 +0900
++++ zebra-0.95a/lib/sockunion.h	2007-03-14 04:52:24.000000000 +0900
+@@ -109,6 +109,7 @@ union sockunion *sockunion_getsockname (
+ union sockunion *sockunion_getpeername (int);
+ union sockunion *sockunion_dup (union sockunion *);
+ void sockunion_free (union sockunion *);
++char *sockunion_log (union sockunion *);
+ 
+ #ifndef HAVE_INET_NTOP
+ const char *
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zclient.c
 --- zebra-0.95a.orig/lib/zclient.c	2002-10-05 10:27:49.000000000 +0900
-+++ zebra-0.95a/lib/zclient.c	2007-03-03 23:45:02.000000000 +0900
++++ zebra-0.95a/lib/zclient.c	2007-03-14 10:16:03.000000000 +0900
 @@ -21,6 +21,7 @@
  
  #include <zebra.h>
@@ -157,7 +333,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zcli
  #include "prefix.h"
  #include "stream.h"
  #include "network.h"
-@@ -519,6 +520,68 @@ zapi_ipv6_delete (struct zclient *zclien
+@@ -519,6 +520,72 @@ zapi_ipv6_delete (struct zclient *zclien
  
  #endif /* HAVE_IPV6 */
  
@@ -182,6 +358,8 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zcli
 +  stream_write (s, (u_char *)su, sizeof (union sockunion));
 +  /* ifindex */
 +  stream_putl (s, ifindex);
++  /* application id */
++  stream_putc (s, zclient->redist_default);
 +  /* peer type */
 +  stream_putc (s, type);
 +
@@ -189,7 +367,6 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zcli
 +  stream_putw_at (s, 0, stream_get_endp (s));
 +
 +  zlog_info ("BFD: peer add %s", sockunion_su2str (su));
-+
 +  return writen (zclient->sock, s->data, stream_get_endp (s));
 +}
 +
@@ -214,19 +391,22 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/lib/zclient.c zebra-0.95a/lib/zcli
 +  stream_write (s, (u_char *)su, sizeof (union sockunion));
 +  /* ifindex */
 +  stream_putl (s, ifindex);
++  /* application id */
++  stream_putc (s, zclient->redist_default);
 +  /* peer type */
 +  stream_putc (s, type);
 +
 +  /* Put length at the first point of the stream. */
 +  stream_putw_at (s, 0, stream_get_endp (s));
 +
++  zlog_info ("BFD: peer delete %s", sockunion_su2str (su));
 +  return writen (zclient->sock, s->data, stream_get_endp (s));
 +}
 +
  int
  zebra_redistribute_send (int command, int sock, int type)
  {
-@@ -812,6 +875,14 @@ zclient_read (struct thread *thread)
+@@ -812,6 +879,14 @@ zclient_read (struct thread *thread)
        if (zclient->ipv6_route_delete)
  	ret = (*zclient->ipv6_route_delete) (command, zclient, length);
        break;
@@ -698,15 +878,28 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospf6d/ospf6_zebra.h zebra-0.95a/o
 +
  #endif /*OSPF6_ZEBRA_H*/
  
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_interface.h zebra-0.95a/ospfd/ospf_interface.h
+--- zebra-0.95a.orig/ospfd/ospf_interface.h	2003-03-22 17:07:32.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_interface.h	2007-03-14 05:49:28.000000000 +0900
+@@ -60,6 +60,8 @@ struct ospf_if_params
+   
+   DECLARE_IF_PARAM (list, auth_crypt);                 /* List of Auth cryptographic data. */
+   DECLARE_IF_PARAM (int, auth_type);               /* OSPF authentication type */
++#define OSPF_INTERFACE_BFD_ENABLE 1
++  DECLARE_IF_PARAM (u_char, bfd_flag);               /* BFD use flag on OSPF */
+ };
+ 
+ struct ospf_if_info
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_neighbor.h zebra-0.95a/ospfd/ospf_neighbor.h
 --- zebra-0.95a.orig/ospfd/ospf_neighbor.h	2003-03-22 17:07:32.000000000 +0900
-+++ zebra-0.95a/ospfd/ospf_neighbor.h	2007-03-10 00:39:29.000000000 +0900
-@@ -81,6 +81,9 @@ struct ospf_neighbor
++++ zebra-0.95a/ospfd/ospf_neighbor.h	2007-03-14 05:50:30.000000000 +0900
+@@ -81,6 +81,10 @@ struct ospf_neighbor
    /* Statistics Field */
    u_int32_t state_change;
    struct ospf_nbr_nbma *nbr_nbma;
 +
-+#define OSPF_NBR_BFD_DOWN     (1<<0)
++#define OSPF_NBR_BFD_ENABLE   (1<<0)
++#define OSPF_NBR_BFD_DOWN     (1<<1)
 +  u_char bfd_flag;
  };
  
@@ -735,7 +928,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_nsm.c zebra-0.95a/ospfd
  
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_packet.c zebra-0.95a/ospfd/ospf_packet.c
 --- zebra-0.95a.orig/ospfd/ospf_packet.c	2005-06-21 09:58:24.000000000 +0900
-+++ zebra-0.95a/ospfd/ospf_packet.c	2007-03-10 00:45:03.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_packet.c	2007-03-14 05:59:04.000000000 +0900
 @@ -47,6 +47,7 @@
  #include "ospfd/ospf_spf.h"
  #include "ospfd/ospf_flood.h"
@@ -744,16 +937,28 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_packet.c zebra-0.95a/os
  
  static void ospf_ls_ack_send_list (struct ospf_interface *, list,
  				   struct in_addr);
-@@ -748,6 +749,8 @@ ospf_hello (struct ip *iph, struct ospf_
+@@ -748,6 +749,20 @@ ospf_hello (struct ip *iph, struct ospf_
        nbr->state = NSM_Down;
        nbr->src = iph->ip_src;
        nbr->address = p;
 +	  /* Register BFD Detection */
-+	  ospf_bfd_peer_add (nbr);
++      if (OSPF_IF_PARAM (oi, bfd_flag) == OSPF_INTERFACE_BFD_ENABLE)
++        {
++          SET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE);
++          ospf_bfd_peer_add (nbr);
++        }
++
++      if (OSPF_IF_PARAM (oi, bfd_flag) == OSPF_INTERFACE_BFD_ENABLE &&
++          CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN))
++        {
++          if (IS_DEBUG_OSPF_EVENT)
++            zlog_info ("BFD State is DOWN. discard");
++          return;
++        }
  
        rn->info = nbr;
  
-@@ -789,6 +792,10 @@ ospf_hello (struct ip *iph, struct ospf_
+@@ -789,6 +804,10 @@ ospf_hello (struct ip *iph, struct ospf_
  
    old_state = nbr->state;
  
@@ -764,6 +969,146 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_packet.c zebra-0.95a/os
    /* Add event to thread. */
    OSPF_NSM_EVENT_EXECUTE (nbr, NSM_HelloReceived);
  
+diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_vty.c zebra-0.95a/ospfd/ospf_vty.c
+--- zebra-0.95a.orig/ospfd/ospf_vty.c	2004-01-10 02:18:23.000000000 +0900
++++ zebra-0.95a/ospfd/ospf_vty.c	2007-03-14 06:10:13.000000000 +0900
+@@ -2555,9 +2555,11 @@ show_ip_ospf_interface_sub (struct vty *
+ 	       inet_ntoa (ospf->router_id), ospf_network_type_str[oi->type],
+ 	       oi->output_cost, VTY_NEWLINE);
+ 
+-      vty_out (vty, "  Transmit Delay is %d sec, State %s, Priority %d%s",
++      vty_out (vty, "  Transmit Delay is %d sec, State %s, Priority %d%s%s",
+ 	       OSPF_IF_PARAM (oi,transmit_delay), LOOKUP (ospf_ism_state_msg, oi->state),
+-	       PRIORITY (oi), VTY_NEWLINE);
++	       PRIORITY (oi), 
++           IF_DEF_PARAMS (ifp)->bfd_flag == OSPF_INTERFACE_BFD_ENABLE ?  ", BFD enabled" : "",
++           VTY_NEWLINE);
+ 
+       /* Show DR information. */
+       if (DR (oi).s_addr == 0)
+@@ -2851,6 +2853,8 @@ show_ip_ospf_neighbor_detail_sub (struct
+   /* Show Area ID. */
+   vty_out (vty, "    In the area %s via interface %s%s",
+ 	   ospf_area_desc_string (oi->area), oi->ifp->name, VTY_NEWLINE);
++  if (CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE))
++    vty_out (vty, "    BFD Enabled%s", VTY_NEWLINE);
+   /* Show neighbor priority and state. */
+   vty_out (vty, "    Neighbor priority is %d, State is %s,",
+ 	   nbr->priority, LOOKUP (ospf_nsm_state_msg, nbr->state));
+@@ -5283,6 +5287,87 @@ ALIAS (no_ip_ospf_transmit_delay,
+        "OSPF interface commands\n"
+        "Link state transmit delay\n");
+ 
++DEFUN (ip_ospf_bfd_enable,
++       ip_ospf_bfd_enable_cmd,
++       "ip ospf bfd-enable",
++       IP_STR
++       OSPF_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct interface *ifp;
++  struct ospf_neighbor *nbr;
++  struct ospf_if_params *params;
++  struct route_node *rn;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  params = IF_DEF_PARAMS (ifp);
++  params->bfd_flag = OSPF_INTERFACE_BFD_ENABLE;
++  SET_IF_PARAM (params, bfd_flag); 
++
++  for (rn = route_top (IF_OIFS (ifp)); rn; rn = route_next (rn))
++    {
++      struct ospf_interface *oi = rn->info;
++      for (rn = route_top (oi->nbrs); rn; rn = route_next (rn))
++          {
++          if ((nbr = rn->info))
++              if (nbr != oi->nbr_self)
++                  {
++                      if (!CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE))
++                          {
++                              SET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE);
++                              ospf_bfd_peer_add (nbr);
++                          }
++                  }
++          }
++    }
++
++  return CMD_SUCCESS;
++}
++
++DEFUN (no_ip_ospf_bfd_enable,
++       no_ip_ospf_bfd_enable_cmd,
++       "no ip ospf bfd-enable",
++       NO_STR
++       IP_STR
++       OSPF_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct interface *ifp;
++  struct ospf_neighbor *nbr;
++  struct ospf_if_params *params;
++  struct route_node *rn;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  params = IF_DEF_PARAMS (ifp);
++  params->bfd_flag = 0;
++  UNSET_IF_PARAM (params, bfd_flag); 
++
++  for (rn = route_top (IF_OIFS (ifp)); rn; rn = route_next (rn))
++    {
++      struct ospf_interface *oi = rn->info;
++      for (rn = route_top (oi->nbrs); rn; rn = route_next (rn))
++          {
++          if ((nbr = rn->info))
++              if (nbr != oi->nbr_self)
++                  {
++                      if (CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE))
++                          {
++                              UNSET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE);
++                              ospf_bfd_peer_delete (nbr);
++                          }
++                  }
++          }
++    }
++
++  return CMD_SUCCESS;
++}
++
+ 
+ DEFUN (ospf_redistribute_source_metric_type,
+        ospf_redistribute_source_metric_type_routemap_cmd,
+@@ -6860,6 +6945,14 @@ config_write_interface (struct vty *vty)
+ 	    vty_out (vty, "%s", VTY_NEWLINE);
+ 	  }
+ 
++	/* bfd-enable print. */
++	if (OSPF_IF_PARAM_CONFIGURED (params, bfd_flag) &&
++	    params->bfd_flag != 0)
++	  {
++	    vty_out (vty, " ip ospf bfd-enable");
++	    vty_out (vty, "%s", VTY_NEWLINE);
++	  }
++
+ 	while (1)
+ 	  {
+ 	    if (rn == NULL)
+@@ -7443,6 +7536,10 @@ ospf_vty_if_init ()
+   install_element (INTERFACE_NODE, &no_ip_ospf_transmit_delay_addr_cmd);
+   install_element (INTERFACE_NODE, &no_ip_ospf_transmit_delay_cmd);
+ 
++  /* "ip ospf bfd-enable" commands. */
++  install_element (INTERFACE_NODE, &ip_ospf_bfd_enable_cmd);
++  install_element (INTERFACE_NODE, &no_ip_ospf_bfd_enable_cmd);
++
+   /* These commands are compatibitliy for previous version. */
+   install_element (INTERFACE_NODE, &ospf_authentication_key_cmd);
+   install_element (INTERFACE_NODE, &no_ospf_authentication_key_cmd);
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/ospfd/ospf_zebra.c zebra-0.95a/ospfd/ospf_zebra.c
 --- zebra-0.95a.orig/ospfd/ospf_zebra.c	2004-01-10 02:18:23.000000000 +0900
 +++ zebra-0.95a/ospfd/ospf_zebra.c	2007-03-10 01:12:00.000000000 +0900
@@ -932,8 +1277,8 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/Makefile.am zebra-0.95a/zebr
  	connected.h ioctl.h rib.h rt.h zserv.h redistribute.h debug.h rtadv.h \
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/zebra/bfd_netlink.c
 --- zebra-0.95a.orig/zebra/bfd_netlink.c	1970-01-01 09:00:00.000000000 +0900
-+++ zebra-0.95a/zebra/bfd_netlink.c	2007-03-11 00:42:16.000000000 +0900
-@@ -0,0 +1,336 @@
++++ zebra-0.95a/zebra/bfd_netlink.c	2007-03-14 12:05:04.000000000 +0900
+@@ -0,0 +1,490 @@
 +/*
 + * BFD Function Interface with netlink interface
 + *
@@ -957,7 +1302,8 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 + * 02111-1307, USA.  
 + */
 +#include <zebra.h>
-+#include "../kbfd/kbfd_netlink.h"
++/* FIXME */
++#include "../kbfd_netlink.h"
 +
 +#include "log.h"
 +#include "thread.h"
@@ -966,6 +1312,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +#include "zclient.h"
 +#include "linklist.h"
 +#include "command.h"
++#include "memory.h"
 +
 +#include "zebra/netlink.h"
 +#include "zebra/bfd_netlink.h"
@@ -974,6 +1321,8 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +#include "zebra/debug.h"
 +
 +struct nlsock bfd_nlsock = {-1, 0, {0}, "bfd-netlink", NULL};
++static list bfd_peer_list;
++
 +extern struct thread_master *master;
 +extern list client_list;
 +
@@ -1074,7 +1423,6 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +	}
 +
 +	memcpy(&req.info.dst.sa, &peer->su, size);
-+	//	memcpy(&req.info.dst, &peer->su, sizeof(union sockunion));
 +	req.info.ifindex = peer->ifindex;
 +
 +	ret = netlink_talk (&req.nlh, &bfd_nlsock);
@@ -1089,17 +1437,93 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +	return 0;
 +}
 +
-+int
-+kernel_bfd_add_peer(struct bfd_peer *peer)
++struct bfd_peer *
++bfd_peer_lookup (union sockunion *su, int ifindex, u_char peer_type)
 +{
-+	bfd_netlink_peer(BFD_NEWPEER, peer);
++    struct bfd_peer *peer;
++    listnode node;
++
++    for (node = listhead (bfd_peer_list); node; nextnode (node)){
++        peer = getdata (node);
++        if (sockunion_same (&peer->su, su) &&
++            peer->ifindex == ifindex &&
++            peer->type == peer_type)
++            return peer;
++    }
++
++    return NULL;
++}
++
++int
++kernel_bfd_add_peer(struct bfd_peer *peer, char appid)
++{
++    struct bfd_peer *tmp_peer;
++    char *tmp_appid = NULL;
++    listnode node;
++
++    /* lookup same peer */
++    tmp_peer = bfd_peer_lookup (&peer->su, peer->ifindex, peer->type);
++    if (!tmp_peer){
++        tmp_peer = XCALLOC (MTYPE_BFD_PEER, sizeof (struct bfd_peer));
++        memcpy (&tmp_peer->su, &peer->su, sizeof(union sockunion));
++        tmp_peer->ifindex = peer->ifindex;
++        tmp_peer->type = peer->type;
++        tmp_peer->appid_lst = list_new ();
++        tmp_appid = malloc(sizeof(char));
++        *tmp_appid = appid;
++        listnode_add (tmp_peer->appid_lst, tmp_appid);
++        listnode_add (bfd_peer_list, tmp_peer);
++    }
++    else{
++        for (node = listhead (tmp_peer->appid_lst); node; nextnode (node)){
++            tmp_appid = getdata (node);
++            if (*tmp_appid == appid)
++                break;
++            tmp_appid = NULL;
++        }
++
++        if (tmp_appid){
++            zlog_warn ("duplicate registration.");
++            return 0;
++        }
++        tmp_appid = malloc(sizeof(char));
++        *tmp_appid = appid;
++        listnode_add (tmp_peer->appid_lst, tmp_appid);
++    }
++
++    bfd_netlink_peer (BFD_NEWPEER, peer);
 +	return 0;
 +}
 +
 +int
-+kernel_bfd_delete_peer(struct bfd_peer *peer)
++kernel_bfd_delete_peer(struct bfd_peer *peer, char appid)
 +{
-+	bfd_netlink_peer(BFD_DELPEER, peer);
++    struct bfd_peer *tmp_peer;
++    listnode node;
++    char *tmp_appid;
++
++    tmp_peer = bfd_peer_lookup (&peer->su, peer->ifindex, peer->type);
++    if (!tmp_peer)
++        return 0;
++
++    for (node = listhead (tmp_peer->appid_lst); node; nextnode (node)){
++        tmp_appid = getdata (node);
++        if (*tmp_appid == appid)
++            break;
++        tmp_appid = NULL;
++    }
++
++    if (!tmp_appid)
++        return 0;
++
++    listnode_delete (tmp_peer->appid_lst, (void *)tmp_appid);
++    if (listcount (tmp_peer->appid_lst) == 0){
++        list_delete (tmp_peer->appid_lst);
++        listnode_delete (bfd_peer_list, tmp_peer);
++        bfd_netlink_peer(BFD_DELPEER, tmp_peer);
++        XFREE (MTYPE_BFD_PEER, tmp_peer);
++    }
++
 +	return 0;
 +}
 +
@@ -1163,22 +1587,35 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +
 +	peer = NLMSG_DATA (h);
 +
-+	vty_out (vty, "%-15s %-15s %2u/%-2u %2d %8d(%4d) %6s %s%s", 
-+			 inet_ntop (peer->src.sa.sa_family,
-+						peer->src.sa.sa_family == AF_INET ? 
-+						(char *)&peer->src.sin.sin_addr
-+						: (char *)&peer->src.sin6.sin6_addr, buf1, BUFSIZ),
++	vty_out (vty, "%s", 
 +			 inet_ntop (peer->dst.sa.sa_family,
 +						peer->dst.sa.sa_family == AF_INET ? 
 +						(char *)&peer->dst.sin.sin_addr
-+						: (char *)&peer->dst.sin6.sin6_addr, buf2, BUFSIZ),
++						: (char *)&peer->dst.sin6.sin6_addr, buf1, BUFSIZ));
++    vty_out (vty, "  %u %u  %s %s%s",
 +			 ntohl(peer->my_disc),
 +			 ntohl(peer->your_disc),
-+			 1,
-+			 0,0,
 +			 bfd_state_string[peer->state],
 +			 ifindex2ifname (peer->ifindex),
 +			 VTY_NEWLINE);
++
++	vty_out (vty, "  SrcIP: %s%s", 
++			 inet_ntop (peer->src.sa.sa_family,
++						peer->src.sa.sa_family == AF_INET ? 
++						(char *)&peer->src.sin.sin_addr
++						: (char *)&peer->src.sin6.sin6_addr, buf2, BUFSIZ),
++             VTY_NEWLINE);
++
++	vty_out (vty, "  Packet Rcvd: %llu%s", 
++             peer->pkt_in, VTY_NEWLINE);
++	vty_out (vty, "  Packet Send: %llu%s", 
++             peer->pkt_out, VTY_NEWLINE);
++	vty_out (vty, "  Last UpTime(sysUptime): %u%s", 
++             peer->last_up, VTY_NEWLINE);
++	vty_out (vty, "  Last DownTime(sysUptime): %u%s", 
++             peer->last_down, VTY_NEWLINE);
++	vty_out (vty, "  Up Count: %u%s", 
++             peer->up_cnt, VTY_NEWLINE);
 +			 
 +	return 0;
 +}
@@ -1200,7 +1637,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +	return 0;
 +}
 +
-+#define  SHOW_BFD_HEADER   "OurAddr         NeighAddr       LD/RD RH Holddown(mult)  State Int %s"
++#define  SHOW_BFD_HEADER   "DstIP                    LD/RD  State Interface %s"
 +DEFUN (show_bfd_neighbors,
 +       show_bfd_neighbors_cmd,
 +       "show bfd neighbors",
@@ -1215,6 +1652,49 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +	return CMD_SUCCESS;
 +}
 +
++
++DEFUN (bfd_parameter_if,
++       bfd_parameter_if_cmd,
++       "bfd interval <10-10000000> min_rx <10-10000000> multiplier <1-100>",
++	   "Bi-Directional Forarding Detection\n"
++       "Set Desired Min TX Interval on this interface\n"
++       "Desired Min TX Interval\n"
++       "Set Required Min RX Interval on this interface\n"
++       "Required Min RX Interval\n"
++       "Set Detect Time Multiplier on this interface\n"
++       "Detect Time Multiplier\n")
++{
++    struct interface *ifp;   
++	int ret;
++	struct {
++		struct nlmsghdr nlh;
++		struct bfd_nl_linkinfo info;
++	} req;
++
++    ifp = (struct interface *) vty->index;
++
++	memset (&req, 0, sizeof req);
++	req.nlh.nlmsg_len = NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++	req.nlh.nlmsg_flags = NLM_F_CREATE | NLM_F_REQUEST | NLM_F_ACK;
++	req.nlh.nlmsg_type = BFD_SETLINK;
++
++	req.info.ifindex = ifp->ifindex;
++    req.info.mintx = strtol(argv[0], NULL, 10);
++    req.info.minrx = strtol(argv[1], NULL, 10);
++    req.info.mult = strtol(argv[2], NULL, 10);
++
++	ret = netlink_talk (&req.nlh, &bfd_nlsock);
++	if (ret < 0){
++		vty_out (vty, "bfd_netlink: BFD_SETLINK(sendmsg) err");
++		return CMD_WARNING;
++	}
++
++    if (IS_ZEBRA_DEBUG_KERNEL)
++        zlog_info("bfd_netlink: BFD_SETLINK done");
++
++	return CMD_SUCCESS;
++}
++
 +
 +int
 +bfd_netlink_init()
@@ -1223,17 +1703,20 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +	struct sockaddr_nl snl;
 +	int namelen;
 +
++    bfd_peer_list = list_new ();
++
++    /* socket initialization */
 +	bfd_nlsock.sock = socket (AF_NETLINK, SOCK_RAW, NETLINK_BFD);
 +	if (bfd_nlsock.sock < 0){
 +		zlog_err ("Can't open %s socket: %s", bfd_nlsock.name,
-+			  strerror (errno));
++                  strerror (errno));
 +		return -1;
 +	}
 +
 +	ret = fcntl (bfd_nlsock.sock, F_SETFL, O_NONBLOCK);
 +	if (ret < 0){
 +		zlog_err ("Can't set %s socket flags: %s", bfd_nlsock.name,
-+			  strerror (errno));
++                  strerror (errno));
 +		close (bfd_nlsock.sock);
 +		return -1;
 +	}
@@ -1246,7 +1729,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +	ret = bind (bfd_nlsock.sock, (struct sockaddr *) &snl, sizeof snl);
 +	if (ret < 0){
 +		zlog_err ("Can't bind %s socket to group 0x%x: %s", 
-+			  bfd_nlsock.name, snl.nl_groups, strerror (errno));
++                  bfd_nlsock.name, snl.nl_groups, strerror (errno));
 +		close (bfd_nlsock.sock);
 +		return -1;
 +	}
@@ -1256,7 +1739,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +	ret = getsockname (bfd_nlsock.sock, (struct sockaddr *) &snl, (socklen_t *)&namelen);
 +	if (ret < 0 || namelen != sizeof snl){
 +		zlog_err ("Can't get %s socket name: %s", bfd_nlsock.name,
-+			  strerror (errno));
++                  strerror (errno));
 +		close (bfd_nlsock.sock);
 +		return -1;
 +	}
@@ -1266,14 +1749,30 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.c zebra-0.95a/ze
 +
 +	install_element (VIEW_NODE, &show_bfd_neighbors_cmd);
 +	install_element (ENABLE_NODE, &show_bfd_neighbors_cmd);
++	install_element (INTERFACE_NODE, &bfd_parameter_if_cmd);
 +
 +	return ret;
 +}
 +
++int
++bfd_netlink_finish()
++{
++    struct bfd_peer *peer;
++    listnode node;
++
++    /* cleanup kernel peer list */
++    for (node = listhead (bfd_peer_list); node; nextnode (node)){
++        peer = getdata (node);
++        bfd_netlink_peer(BFD_DELPEER, peer);
++    }
++
++    return 0;
++}
++
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.h zebra-0.95a/zebra/bfd_netlink.h
 --- zebra-0.95a.orig/zebra/bfd_netlink.h	1970-01-01 09:00:00.000000000 +0900
-+++ zebra-0.95a/zebra/bfd_netlink.h	2007-03-03 15:02:46.000000000 +0900
-@@ -0,0 +1,44 @@
++++ zebra-0.95a/zebra/bfd_netlink.h	2007-03-14 04:13:55.000000000 +0900
+@@ -0,0 +1,45 @@
 +/*
 + * BFD Function Interface with netlink interface
 + *
@@ -1306,7 +1805,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.h zebra-0.95a/ze
 +{
 +	union sockunion su;
 +	int ifindex;
-+	u_long appid;
++	list appid_lst;
 +#define   BFD_PEER_SINGLE_HOP        0x01
 +#define   BFD_PEER_MULTI_HOP         0x02
 +	u_char type;
@@ -1314,13 +1813,14 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/bfd_netlink.h zebra-0.95a/ze
 +	u_short pad2;
 +};
 +
-+int kernel_bfd_add_peer(struct bfd_peer *);
-+int kernel_bfd_delete_peer(struct bfd_peer *);
++int kernel_bfd_add_peer(struct bfd_peer *, char);
++int kernel_bfd_delete_peer(struct bfd_peer *, char);
++int bfd_netlink_finish();
 +
 +#endif /* __BFD_NETLINK_H_ */
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/main.c zebra-0.95a/zebra/main.c
 --- zebra-0.95a.orig/zebra/main.c	2004-04-29 01:05:31.000000000 +0900
-+++ zebra-0.95a/zebra/main.c	2007-02-26 23:32:50.000000000 +0900
++++ zebra-0.95a/zebra/main.c	2007-03-14 04:13:26.000000000 +0900
 @@ -35,6 +35,7 @@
  #include "zebra/zserv.h"
  #include "zebra/debug.h"
@@ -1329,7 +1829,16 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/main.c zebra-0.95a/zebra/mai
  
  /* Master of threads. */
  struct thread_master *master;
-@@ -275,6 +276,7 @@ main (int argc, char **argv)
+@@ -127,6 +128,8 @@ sigint (int sig)
+   irdp_finish();
+ #endif
+ 
++  bfd_netlink_finish();
++
+   exit (0);
+ }
+ 
+@@ -275,6 +278,7 @@ main (int argc, char **argv)
    kernel_init ();
    interface_list ();
    route_read ();
@@ -1412,7 +1921,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/rt_netlink.c zebra-0.95a/zeb
  {
 diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zserv.c
 --- zebra-0.95a.orig/zebra/zserv.c	2003-02-21 08:27:24.000000000 +0900
-+++ zebra-0.95a/zebra/zserv.c	2007-03-03 14:59:58.000000000 +0900
++++ zebra-0.95a/zebra/zserv.c	2007-03-14 09:59:50.000000000 +0900
 @@ -38,6 +38,7 @@
  #include "zebra/redistribute.h"
  #include "zebra/debug.h"
@@ -1502,7 +2011,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zs
  /* Register zebra server interface information.  Send current all
     interface and address information. */
  void
-@@ -1379,6 +1445,54 @@ zread_ipv6_nexthop_lookup (struct zserv 
+@@ -1379,6 +1445,56 @@ zread_ipv6_nexthop_lookup (struct zserv 
  }
  #endif /* HAVE_IPV6 */
  
@@ -1511,6 +2020,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zs
 +zread_bfd_peer_add (struct zserv *client, u_short length)
 +{
 +  struct bfd_peer peer;
++  char appid;
 +  struct stream *s;
 +
 +  /* Get input stream.  */
@@ -1522,12 +2032,12 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zs
 +  stream_get (&peer.su, s, sizeof (union sockunion));
 +  /* ifindex */
 +  peer.ifindex = stream_getl (s);
-+  /* application id(pending) */
-+  peer.appid = 0;
++  /* application id */
++  appid = stream_getc (s);;
 +  /* peer type */
 +  peer.type = stream_getc (s);
 +
-+  kernel_bfd_add_peer (&peer);
++  kernel_bfd_add_peer (&peer, appid);
 +}
 +
 +/* bfd peer delete function(from protocol => zebra => kernel) */
@@ -1535,6 +2045,7 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zs
 +zread_bfd_peer_delete (struct zserv *client, u_short length)
 +{
 +  struct bfd_peer peer;
++  char appid;
 +  struct stream *s;
 +
 +  /* Get input stream.  */
@@ -1546,18 +2057,18 @@ diff -Nupwbr --exclude=.deps zebra-0.95a.orig/zebra/zserv.c zebra-0.95a/zebra/zs
 +  stream_get (&peer.su, s, sizeof (union sockunion));
 +  /* ifindex */
 +  peer.ifindex = stream_getl (s);
-+  /* application id(pending) */
-+  peer.appid = 0;
++  /* application id */
++  appid = stream_getc (s);
 +  /* peer type */
 +  peer.type = stream_getc (s);
 +
-+  kernel_bfd_delete_peer (&peer);
++  kernel_bfd_delete_peer (&peer, appid);
 +}
 +
  /* Close zebra client. */
  void
  zebra_client_close (struct zserv *client)
-@@ -1533,6 +1647,12 @@ zebra_client_read (struct thread *thread
+@@ -1533,6 +1649,12 @@ zebra_client_read (struct thread *thread
      case ZEBRA_IPV4_IMPORT_LOOKUP:
        zread_ipv4_import_lookup (client, length);
        break;

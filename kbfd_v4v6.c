@@ -27,6 +27,8 @@
 #include <linux/netfilter.h>
 #include <net/ipv6.h>
 #include <net/addrconf.h>
+#include <net/flow.h>
+#include <net/ip6_route.h>
 
 #include "kbfd.h"
 #include "kbfd_session.h"
@@ -127,6 +129,34 @@ bfd_v4v6_namelen(struct sockaddr *addr)
 	}
 	return 0;
 };
+
+static int
+bfd_v4v6_get_oif(struct sockaddr *addr)
+{
+	struct flowi fl;
+	struct dst_entry *dst;
+
+	switch (addr->sa_family){
+	case AF_INET:
+        memset(&fl, 0, sizeof(fl));
+        memcpy(&fl.fl4_dst, &(((struct sockaddr_in *)addr)->sin_addr),
+               sizeof(struct in_addr));
+		ip_route_output_key((struct rtable **)&dst, &fl);
+		return dst ? dst->dev->ifindex : 0;
+		break;
+	case AF_INET6:
+        memset(&fl, 0, sizeof(fl));
+		ipv6_addr_copy(&fl.fl6_dst,
+                       &((struct sockaddr_in6 *)addr)->sin6_addr);
+        dst = ip6_route_output(NULL, &fl);
+		return dst ? dst->dev->ifindex : 0;
+		break;
+	default:
+		break;
+	}
+	return 0;
+};
+
 
 static int
 bfd_v4v6_create_ctrl_socket(struct bfd_session *bfd)
@@ -407,5 +437,6 @@ struct bfd_proto v4v6_proto = {
 	.cmp = bfd_v4v6_cmp,
 	.addr_print = bfd_v4v6_print,
 	.namelen = bfd_v4v6_namelen,
+	.get_oif = bfd_v4v6_get_oif,
 };
 

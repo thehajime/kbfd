@@ -3,6 +3,7 @@ kbfd is BFD(Bidirectional Forwarding Detection) implementation in Linux Kernel M
 
 - Requirement
 linux kernel version linux-2.6.16 source tree at least.
+CONFIG_IPV6 or ipv6.ko(in case module build)
 
 - Tested environment
   Linux 2.6.17(SMP) on vmware Celeron 2.66GHz with 100M ether

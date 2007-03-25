@@ -32,13 +32,12 @@
  */
 #define  BFD_NEWPEER                         1 /* Add BFD Session */
 #define  BFD_DELPEER                         2 /* Delete BFD Session */
-#define  BFD_GETPEER                         3 /* Get Peer Summary */
-#define  BFD_GETPEERSTAT                     4 /* Get Peer Full Information */
-#define  BFD_ADMINDOWN                       5 /* Set Session to AdminDown */
-#define  BFD_SETLINK                         6 /* Set Interface Parameter */
-#define  BFD_SETFLAG                         7 /*  */
-#define  BFD_CLEAR_COUNTER                   8 /* Clear Counter */
-#define  BFD_CLEAR_SESSION                   9 /* Re-Initialize Session */
+#define  BFD_GETPEER                         3 /* Get Peer Information */
+#define  BFD_ADMINDOWN                       4 /* Set Session to AdminDown */
+#define  BFD_SETLINK                         5 /* Set Interface Parameter */
+#define  BFD_SETFLAG                         6 /* Set Debug Flag Parameter */
+#define  BFD_CLEAR_COUNTER                   7 /* Clear Counter */
+#define  BFD_CLEAR_SESSION                   8 /* Re-Initialize Session */
 
 /* 
  * BFD State
@@ -68,6 +67,15 @@ struct bfd_nl_peerinfo
 	int ifindex;
 	u_int32_t my_disc;
 	u_int32_t your_disc;
+
+    /* counters */
+	u_int64_t pkt_in;
+	u_int64_t pkt_out;
+	u_int32_t last_up;
+	u_int32_t last_down;
+	u_int32_t last_diag;
+	u_int32_t up_cnt;
+	u_int32_t last_discont;		/* FIXME(not implemented) */
 };
 
 struct bfd_nl_linkinfo

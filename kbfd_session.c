@@ -130,6 +130,9 @@ bfd_session_new(struct bfd_proto *proto, struct sockaddr *dst, int ifindex)
 		/* set output interface */
 		bfd->tx_ctrl_sock->sk->sk_bound_dev_if = ifindex;
 
+        if (ifindex == 0)
+            ifindex = bfd->proto->get_oif(dst);
+
 		/* bind interface */
 		bfd->bif = bfd_interface_get(ifindex);
 	}
@@ -368,7 +371,7 @@ bfd_change_interval_time(struct bfd_session *bfd,
 	if (bfd->cpkt.state == BSM_Up &&
 		tx > ntohl(bfd->cpkt.des_min_tx_intv)){
 		bfd->cpkt.poll = 1;
-			blog_info("BFD Poll Sequence is started(tx_intv change).");
+        blog_info("BFD Poll Sequence is started(tx_intv change).");
 	}
 	else{
 		bfd->act_tx_intv = tx < ntohl(bfd->last_rcv_req_rx) ?

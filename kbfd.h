@@ -54,6 +54,7 @@ struct bfd_proto
 	int (*cmp)(struct sockaddr *, struct sockaddr *);
 	char *(*addr_print)(struct sockaddr *, char *);
 	int (*namelen)(struct sockaddr *);
+	int (*get_oif)(struct sockaddr *);
 };
 
 
