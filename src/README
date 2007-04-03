@@ -1,0 +1,47 @@
+
+kbfd is BFD(Bidirectional Forwarding Detection) implementation 
+in Linux Kernel Module.
+
+It is available patch for zebra-0.95a.
+(quagga's patch also avaliable soon.)
+This could be control kbfd and utilize for ospfd/ospf6d/bgpd to use
+bfd fast failure detection.
+
+- base specification
+  draft-ietf-bfd-base-05.txt
+  draft-ietf-bfd-v4v6-1hop-05.txt
+  draft-ietf-bfd-generic-02.txt
+
+ (future plan)
+  draft-ietf-bfd-multihop-04.txt 
+  draft-ietf-bfd-mib-03.txt 
+
+- Requirement
+  linux kernel version linux-2.6.16 source tree at least.
+  CONFIG_IPV6 or ipv6.ko(in case module build)
+
+- Tested environment(07/03/25)
+  Linux 2.6.17(SMP) on vmware Celeron 2.66GHz with 100M ether
+  Linux 2.6.16.42(PREEMPT) on Celeron 450MHz with 802.11 wlan(!!)
+
+- How to INSTALL
+  tar xfz kbfd-$(VERSION).tar.gz
+  cd kbfd
+  make
+  sudo make install
+
+- How to build zebra-enabled
+  cd kbfd
+  make zebra
+
+- How to run kbfd
+  sudo modprobe kbfd
+
+- How to use zebra with enable-bfd
+  ip ospf bfd-enable
+  ipv6 ospf bfd-enable
+  neighbor (A.B.C.D|X:X::X:X) bfd-enable
+  show bfd neighbors
+
+- Contact
+ http://kbfd.sourceforge.net/
