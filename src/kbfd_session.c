@@ -144,6 +144,9 @@ void
 bfd_session_free(struct bfd_session *bfd)
 {
 	if (bfd){
+		if (bfd->src){
+			kfree(bfd->src);
+		}
 		if (bfd->dst){
 			kfree(bfd->dst);
 		}

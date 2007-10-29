@@ -1,0 +1,42 @@
+
+- Not Yet
+Follow application(ospfd/bgpd,)'s behavior with draft-generic
+
+Echo Function Impl.
+Concatenated path
+Oprofile Mesurement
+Multi-hop operation support(draft-multihop)
+Authentication(text/md5/sha1)
+Interact with Graceful Restart
+
+create new improved timer function(to too match mod_timer call)
+MIB Impl.
+packet in/out statistics
+ => Clear Counter
+ => packet counter on bfd_interface
+ => discard counter on bfd_interface
+
+Performance Hack
+ - Kernel Thread Context => SoftIRQ Ctxt?
+ - IP Stack Base Impl.   => Without IP Stack Impl.
+
+follow new draft(base-06,gen-03)
+
+Can I implement kbfd in userland application?
+ => Can we use netlink socket in userland socket? 
+
+BFD encapsulate with ICMPv6
+
+
+- DONE
+Termination Process improve
+File name refine
+TTL Bug(setsockopt doesn't need in kernel space)
+Srt Port Binding for Control Packet
+P-bit F-bit Implementation
+Macro Definition(Flag Operation, diag)
+Interface Definition Binding(struct bfd_interface)
+Improve abstraction Level(BFD on ether/BFD on IPv4/IPv6)
+Interface Binding if 1-hop neighbor?(Under consideration)
+netlink interface(need to kernel merge?)
+TTL(HopLimit) check if not 255
