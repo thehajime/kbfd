@@ -3,7 +3,7 @@
 Modules.symvers
 *.ko
 .tmp_versions
-.svnignore
+#.svnignore
 GPATH
 GRTAGS
 GSYMS
