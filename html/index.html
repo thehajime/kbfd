@@ -18,15 +18,28 @@ kbfd
 kbfd is BFD(Bidirectional Forwarding Detection) implementation 
 in Linux Kernel Module.
 </p>
-
 <p>
-It is available patch for zebra-0.95a. <br/>
-(quagga's patch also avaliable soon.)<br><br>
-
 This could be control kbfd and utilize for ospfd/ospf6d/bgpd to use
 bfd fast failure detection.
 </p>
 
+<h2>News</h2>
+<p>
+<ul>
+<li> 2008/01/30<br>
+  quagga patch (for anoncvs.quagga.net) is available.
+<li> 2007/03/26<br>
+  It is available patch for zebra-0.95a.
+<li> 2007/04/01<br>
+  Now kbfd patch is included in zebra cvs repositlry(with --enable-kbfd-support)
+<li> 2007/03/26<br>
+  It is available patch for zebra-0.95a.
+</li>
+</ul>
+
+</p>
+
+<h2>Specification</h2>
 <ul>
 <li> base specification
 <ul>
@@ -42,19 +55,19 @@ bfd fast failure detection.
 </ul>
 </ul>
 
-<ul>
-<li> Requirement
+<h2> Requirement</h2>
 <ul>
 <li>  linux kernel version linux-2.6.16 source tree at least.
 <li>  CONFIG_IPV6 or ipv6.ko(in case module build)
 </ul>
-</ul>
 
-<ul> Download
+<h2>Download</h2>
+<ul>
 <li> <a href="http://downloads.sourceforge.net/kbfd/kbfd-0.1.tar.gz"> kbfd-0.1.tar.gz</a>
 <li> <a href="http://downloads.sourceforge.net/kbfd/kbfd-0.1-zebra-0.95a.patch.gz"> kbfd-0.1-zebra-0.95a.patch.gz </a>
 </ul>
 
+<h2>Howto</h2>
 <ul>
 <li> How to INSTALL
 <pre>
@@ -66,8 +79,12 @@ bfd fast failure detection.
 
 <li> How to build zebra with bfd-enabled
 <pre>
-  cd kbfd
-  make zebra
+ cvs -d :pserver:anoncvs@anoncvs.zebra.org:/cvsroot login
+ cvs -d :pserver:anoncvs@anoncvs.zebra.org:/cvsroot co zebra
+ cd zebra
+ cp $(somewhere)/kbfd_netlink.h ./
+ ./configure --enable-kbfd-support
+ make
 </pre>
 
 <li> How to run kbfd
