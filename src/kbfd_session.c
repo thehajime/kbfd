@@ -369,17 +369,23 @@ void
 bfd_change_interval_time(struct bfd_session *bfd,
 						  u_int32_t tx, u_int32_t rx)
 {
+	if (IS_DEBUG_BSM)
+		blog_info("Try to change intv TX=%d(usec), RX=%d(usec)", 
+			tx, rx);
 
 	/* Section 6.7.3 Description */
 	if (bfd->cpkt.state == BSM_Up &&
 		tx > ntohl(bfd->cpkt.des_min_tx_intv)){
 		bfd->cpkt.poll = 1;
-        blog_info("BFD Poll Sequence is started(tx_intv change).");
+		blog_info("BFD Poll Sequence is started(tx_intv change)");
 	}
 	else{
 		bfd->act_tx_intv = tx < ntohl(bfd->last_rcv_req_rx) ?
 			ntohl(bfd->last_rcv_req_rx) : tx;
 		bfd_reset_tx_timer(bfd);
+		if (IS_DEBUG_BSM)
+			blog_info("New TX %d(usec)(tx_intv change)", 
+				bfd->act_tx_intv);
 	}
 
 	if (bfd->cpkt.state == BSM_Up &&
@@ -390,11 +396,17 @@ bfd_change_interval_time(struct bfd_session *bfd,
 	}
 	else{
 		bfd->act_rx_intv = rx;
+		if (IS_DEBUG_BSM)
+			blog_info("New RX %d(usec)(rx_intv change)", rx);
 	}
 
 	bfd->cpkt.des_min_tx_intv = htonl(tx);
 	bfd->cpkt.req_min_rx_intv = htonl(rx);
+	bfd->cpkt.detect_mult = bfd->bif->v_mult;
 
+	if (IS_DEBUG_BSM)
+		blog_info("Change intv TX=%d(usec), RX=%d(usec)", 
+			tx, rx);
 	return;
 }
 

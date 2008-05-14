@@ -33,4 +33,5 @@ struct bfd_interface
 
 struct bfd_interface *bfd_interface_get(int);
 void bfd_interface_free(struct bfd_interface *);
+void bfd_interface_change_timer(struct bfd_interface *);
 

@@ -24,10 +24,13 @@
 
 #include "kbfd_interface.h"
 #include "kbfd_log.h"
+#include "kbfd_session.h"
 #include "kbfd.h"
 
 static struct bfd_interface *biflist = NULL;
 static DEFINE_SPINLOCK(bif_lock);
+/* FIXME */
+extern struct bfd_proto v4v6_proto;
 
 inline static struct bfd_interface *
 bfd_interface_new(int ifindex)
@@ -78,6 +81,7 @@ bfd_interface_get(int ifindex)
 
 	spin_lock(&bif_lock);
 	bif->next = biflist;
+	biflist = bif;
 	spin_unlock(&bif_lock);
 
 	return bif;
@@ -90,5 +94,35 @@ bfd_interface_free(struct bfd_interface *bif)
 	if (bif){
 		kfree(bif);
 	}
+	return;
+}
+
+void
+bfd_interface_change_timer(struct bfd_interface *bif)
+{
+	struct bfd_interface *tmpbif = biflist;
+	struct bfd_session *bfd = NULL;
+	int i;
+
+	/* lookup same interface */
+	rcu_read_lock();
+	while (tmpbif){
+		if (tmpbif == bif)
+			break;
+		tmpbif = tmpbif->next;
+	}
+	rcu_read_unlock();
+
+	rcu_read_lock();
+	for (i = 0; i<BFD_SESSION_HASH_SIZE; i++){
+		bfd = v4v6_proto.nbr_tbl[i];
+		while (bfd){
+			if (bfd->bif == bif)
+				bfd_change_interval_time(bfd, bif->v_mintx, bif->v_minrx);
+			bfd = bfd->nbr_next;
+		}
+	}
+	rcu_read_unlock();
+
 	return;
 }

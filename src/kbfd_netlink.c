@@ -183,6 +183,7 @@ bfd_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 				bif->v_mintx = link->mintx;
 				bif->v_minrx = link->minrx;
 				bif->v_mult = link->mult;
+				bfd_interface_change_timer(bif);
 			}
 			else
 				err = ENOMEM;
