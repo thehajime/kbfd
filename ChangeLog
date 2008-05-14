@@ -1,3 +1,7 @@
+2008-05-14  Hajime Tazaki  <tazaki@sfc.wide.ad.jp>
+
+	* bugfix: bfd interval command implementation
+
 2007-03-25  Hajime TAZAKI  <thehajime@gmail.com>
 
 	* kbfd-0.1 release.
