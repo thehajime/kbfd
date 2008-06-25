@@ -1,0 +1,14 @@
+*.cmd
+*.mod.c
+Modules.symvers
+*.ko
+.tmp_versions
+#.svnignore
+GPATH
+GRTAGS
+GSYMS
+GTAGS
+html
+kbfd-0.1-zebra-0.95a.patch.gz
+kbfd-0.1.tar.gz
+zebra-0.95a*
