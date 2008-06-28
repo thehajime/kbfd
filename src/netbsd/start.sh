@@ -1,3 +1,3 @@
 #!/bin/sh
 
-modload -e kbfd_lkmentry -p kbfd_post.sh netbsd/kbfd.o
+modload -e kbfd_lkmentry -p netbsd/kbfd_post.sh netbsd/kbfd.o

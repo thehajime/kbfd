@@ -72,13 +72,14 @@
 #include <sys/rnd.h>
 #include <sys/callout.h>
 #include <sys/protosw.h>
+#include <sys/queue.h>
+#include <sys/poll.h>
+#include <sys/condvar.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/in_var.h>
 #include <netinet6/ip6_var.h>
 #include <machine/stdarg.h>
-
-#include "kbfd_uio.h"
 
 /* FIXME */
 #define __LITTLE_ENDIAN_BITFIELD

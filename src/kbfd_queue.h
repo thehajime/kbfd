@@ -31,8 +31,9 @@
 	(W)->wk.data = (A);
 #elif defined __NetBSD__
 #define BFD_INIT_WORK(W,F,A)						\
-	callout_init(&((W)->u.wk_ch), 0);				\
-	callout_setfunc(&((W)->u.wk_ch), (F), (A));
+	(W)->func = (F);						\
+	   (W)->arg = (A);						\
+	callout_init(&((W)->u.wk_ch), 0);
 #endif	/* __NetBSD__ */
 
 struct bfd_workqueue
@@ -53,7 +54,9 @@ struct bfd_work
 		struct work wk;
 		struct callout wk_ch;
 	}u;
-	uint32_t timeout;
+	struct workqueue *wkq;
+	void (*func)(void *);
+	void *arg;
 #endif
 };
 

@@ -25,6 +25,10 @@
 
 struct kbfd_softc{
 	int sc_refcnt;
+	struct selinfo r_sel;
+	/* output queue for notification */
+	SIMPLEQ_HEAD(q_notify, bfd_nl_peerinfo) kbfd_sendq;
+	bfd_lock_t sendq_lock;
 };
 
 /* up to 8 minor devices */
@@ -34,5 +38,10 @@ int bfd_open(dev_t, int, int, struct lwp *);
 int bfd_close(dev_t, int, int, struct lwp *);
 int bfd_read(dev_t, struct uio *, int);
 int bfd_ioctl(dev_t, u_long, void *, int, struct lwp *);
+int bfd_poll(dev_t, int, struct lwp *);
+int bfd_ioctl_init(void);
+int bfd_ioctl_finish(void);
+
+void bfd_ioctl_send(struct bfd_session *);
 
 #endif /* __BFD_UIO_H__ */

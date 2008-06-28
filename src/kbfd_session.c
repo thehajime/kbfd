@@ -31,7 +31,9 @@
 #include "kbfd_memory.h"
 #include "kbfd_lock.h"
 #include "kbfd.h"
-
+#if defined (__NetBSD__)
+#include "kbfd_uio.h"
+#endif
 
 #ifdef linux
 static struct proc_dir_entry *kbfd_root_dir = NULL;
@@ -85,6 +87,15 @@ static inline struct bfd_session *
 bfd_session_new(struct bfd_proto *proto, struct sockaddr *dst, int ifindex)
 {
 	struct bfd_session *bfd;
+
+	if(!dst)
+		return NULL;
+
+	if(dst->sa_family != AF_INET && dst->sa_family != AF_INET6){
+		blog_warn("%s: unknown family %d. discard", 
+		    __func__, dst ? dst->sa_family : -1);
+		return NULL;
+	}
 
 	bfd = bfd_malloc(sizeof(struct bfd_session));
 	if (bfd){
@@ -222,6 +233,8 @@ bfd_session_add(struct bfd_proto *proto, struct sockaddr *dst, int ifindex)
 				  bfd->cpkt.my_disc);
 	}
 
+	proto->nbr_num++;
+
 	bfd_bsm_event(bfd, BSM_Start);
 
 	return err;
@@ -298,6 +311,7 @@ bfd_session_delete(struct bfd_proto *proto, struct sockaddr *dst, int ifindex)
 #endif	/* __NetBSD__ */
 
 	synchronize_rcu();
+	proto->nbr_num--;
 	bfd_session_free(bfd1);
 
 	return 0;
@@ -566,7 +580,7 @@ bfd_bsm_event(struct bfd_session *bfd, int bsm_event)
 #ifdef linux
 			bfd_nl_send(bfd);
 #elif defined __NetBSD__
-			/* FIXME NetBSD */
+			bfd_ioctl_send(bfd);
 #endif	/* __NetBSD__ */
 		}
 		else if (IS_DEBUG_BSM){
@@ -764,7 +778,8 @@ bfd_session_finish(void)
 		master->tx_ctrl_wq = NULL;
 	}
 
-	blog_info("bfd_session_finish is done");
+	if(IS_DEBUG_DEBUG)
+		blog_info("bfd_session_finish is done");
 
 	return 0;
 }

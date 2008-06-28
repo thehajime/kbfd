@@ -44,6 +44,7 @@ struct bfd_master
 struct bfd_proto
 {
 	struct bfd_session **nbr_tbl;
+	uint32_t nbr_num;
 	int (*create_ctrl_socket)(struct bfd_session *);
 	u_int32_t (*hash)(struct sockaddr *);
 	int (*cmp)(struct sockaddr *, struct sockaddr *);

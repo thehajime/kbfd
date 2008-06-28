@@ -24,10 +24,13 @@
 
 extern void blog(const char *, ...);
 
-#define IS_DEBUG_BSM           1
-#define IS_DEBUG_CTRL_PACKET   1
-#define IS_DEBUG_NETLINK       1
-#define IS_DEBUG_DEBUG         0
+extern u_int32_t debug_flag;
+
+#define IS_DEBUG_BSM           (debug_flag & BFD_DEBUG_BSM)
+#define IS_DEBUG_CTRL_PACKET   (debug_flag & BFD_DEBUG_CTRL_PACKET)
+#define IS_DEBUG_UIO           (debug_flag & BFD_DEBUG_UIO)
+#define IS_DEBUG_DEBUG         (debug_flag & BFD_DEBUG_DEBUG)
+
 
 #define blog_debug(format, args...) \
 	printk(KERN_DEBUG "BFD(%lu): " format "\n", jiffies, ##args);

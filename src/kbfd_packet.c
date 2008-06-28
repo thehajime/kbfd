@@ -79,10 +79,13 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
 #elif defined __NetBSD__
 	/* control */
 	control = m_get(M_WAIT, MT_CONTROL);
+	MCLAIM(control, bfd->tx_ctrl_sock->so_mowner);
 	control->m_len = cmsglen;
+	control->m_next = NULL;
 
 	cmsgptr = mtod(control, void *);
 	memset(cmsgptr, 0, cmsglen);
+
 	cmsgptr->cmsg_len = CMSG_LEN(sizeof(*pinfo));
 	cmsgptr->cmsg_level = IPPROTO_IPV6;
 	cmsgptr->cmsg_type = IPV6_PKTINFO;
@@ -92,25 +95,16 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
 
 	cmsgptr = (struct cmsghdr *)((char *)(cmsgptr) + 
 	    __CMSG_ALIGN((cmsgptr)->cmsg_len));
+
 	cmsgptr->cmsg_len = CMSG_LEN(sizeof(int));
 	cmsgptr->cmsg_level = IPPROTO_IPV6;
 	cmsgptr->cmsg_type = IPV6_HOPLIMIT;
 	hoplimit = (int *)CMSG_DATA(cmsgptr);
 	*hoplimit = 255;
 
-#if 0
-	/* sockopt */
-	m = m_get(M_WAIT, MT_SOOPTS);
-	MCLAIM(m, rx_ctrl_sock->so_mowner);
-	*mtod(m, int *) = 1;
-	m->m_len = sizeof(int);
-	err = sosetopt(bfd->tx_ctrl_sock, IPPROTO_IPV6, IPV6_PKTINFO, m);
-	if(err)
-		blog_err("sosetopt(IPV6_PKTINFO) err = %d", err);
-#endif
-
 	/* name(to) */
 	to = m_get(M_WAIT, MT_SONAME);
+	MCLAIM(to, bfd->tx_ctrl_sock->so_mowner);
 	to->m_len = bfd->proto->namelen(bfd->dst);
 	memcpy(mtod(to, void *), bfd->dst, to->m_len);
 
@@ -137,17 +131,16 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
         /* FIXME */
 	err = (*bfd->tx_ctrl_sock->so_send)(bfd->tx_ctrl_sock, 
 	    to, &auio, NULL, control, 0, curlwp);
-	/* Protocol is responsible for freeing 'control' */
-	control = NULL;
-	m_free(to);
-
 	if (err != 0)
 #endif /* __NetBSD__ */
 		blog_err("sock_sendmsg returned: %d", err);
 #ifdef  linux
 	set_fs(oldfs);
-#endif  /* linux */
-
+#elif defined (__NetBSD__)
+	/* Protocol is responsible for freeing 'control' */
+	control = NULL;
+	m_free(to);
+#endif
 	/* Packet Count */
 	bfd->pkt_out++;
 	/* force final bit set to 0 */

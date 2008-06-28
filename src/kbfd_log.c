@@ -22,6 +22,8 @@
 
 #include "kbfd_log.h"
 
+u_int32_t debug_flag;
+
 void
 blog(const char *format, ...)
 {

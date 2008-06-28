@@ -22,21 +22,36 @@
 
 #include "kbfd_sys.h"
 #include "kbfd_memory.h"
+#include "kbfd_netlink.h"
 #include "kbfd_log.h"
 #include "kbfd_queue.h"
 #include "kbfd_session.h"
 
 #ifdef __NetBSD__
 static void
-callout_worker(struct work *wk, void *arg)
+bfd_worker(struct work *wk, void *arg)
 {
-	struct callout *c = (void *)wk;
 	struct bfd_work *bwk = (void *)wk;
 
-	callout_schedule(c, bwk->timeout);
 	if(IS_DEBUG_DEBUG)
-		blog_info("callout_worker return. to=%d", bwk->timeout);
+		blog_debug("%s: %p", __func__, bwk);
+
+	(*bwk->func)(bwk->arg);
+
 	return;
+}
+
+static void
+callout_fire(void *arg)
+{
+	struct bfd_work *bwk = arg;
+
+	if(IS_DEBUG_DEBUG)
+		blog_debug("%s: %p", __func__, bwk);
+
+	workqueue_enqueue(bwk->wkq, &bwk->u.wk, NULL);
+	return;
+
 }
 #endif	/* __NetBSD__ */
 
@@ -49,12 +64,18 @@ bfd_workqueue_add(struct bfd_workqueue *wkq, struct bfd_work *wk,
 	queue_delayed_work(wkq->wkq, &wk->wk,
 	    usecs_to_jiffies(usec) * jitter / 100 );
 #elif defined __NetBSD__
-	wk->timeout = ((hz*usec)/1000000) * jitter / 100;
+	u_int32_t timeout = ((hz*usec)/1000000) * jitter / 100;
+	wk->wkq = wkq->wkq;
 	if(IS_DEBUG_DEBUG){
 		blog_info("wq add. usec=%d, jitter=%d, to=%d",
-		    usec, jitter, wk->timeout);
+		    usec, jitter, timeout);
 	}
-	workqueue_enqueue(wkq->wkq, &wk->u.wk, NULL);
+
+	if(IS_DEBUG_DEBUG)
+		blog_debug("%s: %p", __func__, wk);
+
+	callout_setfunc(&wk->u.wk_ch, callout_fire, wk);
+	callout_schedule(&wk->u.wk_ch, timeout);
 #endif	/* __NetBSD__ */
 	return 0;
 }
@@ -66,6 +87,8 @@ bfd_workqueue_delete(struct bfd_workqueue *wkq, struct bfd_work *wk)
 	if (wk->wk.pending)
 		cancel_rearming_delayed_workqueue(wkq->wkq, &wk->wk);
 #elif defined __NetBSD__
+	if(IS_DEBUG_DEBUG)
+		blog_debug("%s: %p", __func__, wk);
 	callout_stop(&wk->u.wk_ch);
 #endif	/* __NetBSD__ */
   return 0;
@@ -84,7 +107,7 @@ bfd_workqueue_init(const char *name)
 	queue->wkq = create_singlethread_workqueue(name);
 #elif defined __NetBSD__
 	workqueue_create(&queue->wkq, name,
-	    callout_worker, NULL, PUSER - 1, IPL_SOFTCLOCK, 0);
+	    bfd_worker, NULL, PUSER - 1, IPL_SOFTCLOCK, 0);
 	
 #endif	/* __NetBSD__ */
 	return queue;

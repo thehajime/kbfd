@@ -28,8 +28,12 @@
 #include "kbfd_netlink.h"
 #include "kbfd_v4v6.h"
 #include "kbfd_log.h"
+#include "kbfd_lock.h"
 #include "kbfd_memory.h"
 #include "kbfd.h"
+#if defined (__NetBSD__)
+#include "kbfd_uio.h"
+#endif
 
 struct bfd_master *master = NULL;
 static
@@ -53,7 +57,9 @@ bfd_init(void){
 
 #ifdef linux
 	bfd_netlink_init();
-#endif /* linux */
+#elif defined (__NetBSD__)
+	bfd_ioctl_init();
+#endif
 	bfd_v4v6_init();
 	bfd_session_init();
 
@@ -75,7 +81,9 @@ bfd_exit(void)
 	bfd_v4v6_finish();
 #ifdef linux
 	bfd_netlink_finish();
-#endif /* linux */
+#elif defined (__NetBSD__)
+	bfd_ioctl_finish();
+#endif
 
 	if (master)
 		bfd_free(master);
@@ -102,12 +110,12 @@ static struct cdevsw kbfd_dev = {
 		bfd_ioctl,
 		(dev_type_stop((*))) enodev, 
 		(dev_type_tty((*))) enodev,
-		(dev_type_poll((*))) enodev,
+		bfd_poll,
 		(dev_type_mmap((*))) enodev,
 		nokqfilter, 0
 };
 
-static int kbfd_refcnt = 0;
+extern int kbfd_refcnt;
 MOD_DEV("kbfd", "kbfd", NULL, -1, &kbfd_dev, -1);
 
 static int

@@ -29,6 +29,7 @@
 #include "kbfd_v4v6.h"
 #include "kbfd_memory.h"
 #include "kbfd_log.h"
+#include "kbfd_netlink.h"
 
 struct bfd_session *v4v6_nbr_tbl[BFD_SESSION_HASH_SIZE];
 #ifdef linux
@@ -36,6 +37,8 @@ static DECLARE_COMPLETION(threadcomplete);
 static int recv_thread_pid;
 #elif defined __NetBSD__
 static struct lwp *recv_thread;
+static kcondvar_t kbfd_th_cv;
+static kmutex_t kbfd_th_lock;
 #endif /* __NetBSD__ */
 
 
@@ -263,7 +266,6 @@ bfd_v4v6_create_ctrl_socket(struct bfd_session *bfd)
 		}
 	}
 
-blog_info("port bind %d", sport);
 #ifdef linux
 	bfd_free(sin6);
 #elif defined __NetBSD__
@@ -336,22 +338,6 @@ bfd_rcv_v4v6(struct socket *so, void *arg, int waitflag)
 
 		if(control)
 			break;
-#if 0
-		if (err == EWOULDBLOCK){
-			blog_warn("EWOULDBLOCK occur");
-			break;
-		} else if (err != 0 || mp == NULL) {
-			blog_warn("%s: err= %d m %p", __func__, err, (void *)mp);
-			continue;
-		} else{
-			blog_info("%s: so_receive ok, len=%d from=%p, mp=%p, ctrl=%p",
-			    __func__, len, from, mp, control);
-
-			m = from;
-			m->m_next = mp;
-			mp->m_next = control;
-		}
-#endif
 	} while (1);
 	len -= auio.uio_resid;
 
@@ -476,6 +462,11 @@ bfd_v4v6_main_thread(void *data)
 	soshutdown(rx_ctrl_sock, SHUT_RDWR);
 	soclose(rx_ctrl_sock);
 	soclose(echo_sock);
+
+	mutex_enter(&kbfd_th_lock);
+	cv_signal(&kbfd_th_cv);
+	mutex_exit(&kbfd_th_lock);
+
 	kthread_exit(0);
 
 	return;
@@ -830,11 +821,16 @@ bfd_v4v6_init(void)
 #ifdef linux
 	/* Control Packet Socket */
 	bfd_create_ctrl_sock();
-//	blog_info("create ctrl socket succeed");
+	if(IS_DEBUG_DEBUG)
+		blog_info("create ctrl socket succeed");
 
 	/* Echo Packet Socket */
 	bfd_create_echo_sock();
-//	blog_info("create echo socket succeed");
+	if(IS_DEBUG_DEBUG)
+		blog_info("create echo socket succeed");
+#elif defined (__NetBSD__)
+	mutex_init(&kbfd_th_lock, MUTEX_DRIVER, IPL_NONE);
+	cv_init(&kbfd_th_cv, "kbfd_v4v6_rx");
 #endif	/* linux */
 
 	/* initialize neighbor table */
@@ -856,33 +852,35 @@ bfd_v4v6_finish(void)
 	}
 #elif defined __NetBSD__
 	if(recv_thread){
-		/* FIXME!! */
-		int event_queue_count;
-
+		mutex_enter(&kbfd_th_lock);
 		running = 0;
-		tsleep(&event_queue_count, PSOCK,
-		    "bfd_main", 1 * hz);
+		cv_wait(&kbfd_th_cv, &kbfd_th_lock);
+		mutex_exit(&kbfd_th_lock);
 		recv_thread = NULL;
 	}
+	cv_destroy(&kbfd_th_cv);
+	mutex_destroy(&kbfd_th_lock);
 #endif /* __NetBSD__ */
 
-	blog_info("bfd_v4v6_finish thread is done");
+	if(IS_DEBUG_DEBUG)
+		blog_info("bfd_v4v6_finish thread is done");
 
 #ifdef linux
 	if (rx_ctrl_sock)
 		sock_release(rx_ctrl_sock);
-
 	if (echo_sock)
 		sock_release(echo_sock);
-
 #endif	/* linux */
-	blog_info("bfd_v4v6_finish is done");
+	if(IS_DEBUG_DEBUG)
+		blog_info("bfd_v4v6_finish is done");
+
 	return 0;
 }
 
 struct bfd_proto v4v6_proto = {
 	.create_ctrl_socket = bfd_v4v6_create_ctrl_socket,
 	.nbr_tbl = v4v6_nbr_tbl,
+	.nbr_num = 0,
 	.hash = bfd_v4v6_hash,
 	.cmp = bfd_v4v6_cmp,
 	.addr_print = bfd_v4v6_print,

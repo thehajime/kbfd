@@ -7,11 +7,12 @@
 #include <err.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/queue.h>
 #include <netinet/in.h>
 
 #include "kbfd_netlink.h"
 
-#define DEVICE "/dev/kbfd0"
+#define DEVICE "/dev/kbfd1"
 
 int
 main(int argc, char **argv)
@@ -19,6 +20,11 @@ main(int argc, char **argv)
 	struct bfd_nl_peerinfo peer;
 	int fd;
 	int ret;
+	u_int32_t num;
+	char abuf[INET6_ADDRSTRLEN];
+	int i;
+	struct bfd_nl_peerinfo *p1, *p2;
+	fd_set rfds;
 
 	if(argc != 2)
 		err(2, "no args");
@@ -43,10 +49,61 @@ main(int argc, char **argv)
 	else if(strcmp(argv[1], "-d") == 0){
 		ret = ioctl(fd, BFD_DELPEER, &peer);
 	}
-	else
-		err(2, "no such option");
+	else if(strcmp(argv[1], "-s") == 0){
+		ret = ioctl(fd, BFD_GETPEER_NUM, &num);
+		if(ret == -1)
+			perror("ioctl(GET_NUM)");
+		printf("The Number of Peer is %u\n", num);
+
+		p2 = malloc(num * sizeof(struct bfd_nl_peerinfo));
+		if(!p2)
+			perror("malloc");
+		memset(p2, 0, sizeof(*p2));
+
+		ret = ioctl(fd, BFD_GETPEER, p2);
+		if(ret == -1)
+			perror("ioctl(GET_PEER)");
+		for(i=0; i<num; i++){
+			printf("Peer: addr=%s\n", 
+			    inet_ntop(AF_INET6, &p2->dst.sin6.sin6_addr, abuf, sizeof(abuf)));
+			p2++;
+		}
+	}
 	if (ret < 0)
 		err(2, "ioctl(" DEVICE ")");
+
+	/* waiting status change from kernel */
+	if(strcmp(argv[1], "-w") == 0){
+		while(1){
+			while(1) {
+				struct timeval to;
+				memset(&to, 0, sizeof(to));
+				to.tv_sec = 1;
+				to.tv_usec = 0;
+				FD_ZERO(&rfds);
+				FD_SET(fd, &rfds);
+
+				ret = select(fd+1, &rfds, NULL, NULL, NULL);
+				if(ret == 0){
+//					printf("timeout\n");
+					continue;
+				}
+				if(ret < 0)
+					perror("select");
+				break;
+			}
+			p1 = malloc(sizeof(*p1));
+			ret = read(fd, p1, sizeof(*p1));
+			if(ret < 0)
+				perror("read notify");
+			printf("Change Status Peer: addr=%s, ret=%d\n ===> %d\n", 
+			    inet_ntop(AF_INET6, &p1->dst.sin6.sin6_addr, abuf, sizeof(abuf)),
+			    ret,
+			    p1->state);
+			free(p1);
+		}
+	}
+
 
 	close(fd);
 

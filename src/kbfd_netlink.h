@@ -44,13 +44,15 @@
 #elif defined __NetBSD__
 #define  BFD_NEWPEER         _IOW('B', 1, struct bfd_nl_peerinfo) 
 #define  BFD_DELPEER         _IOW('B', 2, struct bfd_nl_peerinfo) 
-#define  BFD_GETPEER         _IOR('B', 3, struct bfd_nl_peerinfo) 
-#define  BFD_ADMINDOWN       _IOW('B', 4, int) 
-#define  BFD_SETLINK         _IOW('B', 5, struct bfd_nl_linkinfo) 
-#define  BFD_SETFLAG         _IOW('B', 6, int) 
-#define  BFD_CLEAR_COUNTER   _IOW('B', 7, int) 
-#define  BFD_CLEAR_SESSION   _IOW('B', 8, int) 
+#define  BFD_GETPEER         _IOWR('B', 3, struct bfd_nl_peerinfo) 
+#define  BFD_GETPEER_NUM     _IOR('B', 4, int) 
+#define  BFD_ADMINDOWN       _IOW('B', 5, int) 
+#define  BFD_SETLINK         _IOW('B', 6, struct bfd_nl_linkinfo) 
+#define  BFD_SETFLAG         _IOW('B', 7, int) 
+#define  BFD_CLEAR_COUNTER   _IOW('B', 8, int) 
+#define  BFD_CLEAR_SESSION   _IOW('B', 9, int) 
 #endif	/* __NetBSD__ */
+
 /* 
  * BFD State
  */
@@ -60,9 +62,20 @@
 #define    BSM_Up		                     3
 #define    BFD_BSM_STATE_MAX                 4
 
+/* 
+ * BFD Flags
+ */
+#define  BFD_DEBUG_BSM             (1 << 0)
+#define  BFD_DEBUG_CTRL_PACKET     (1 << 1)
+#define  BFD_DEBUG_UIO             (1 << 2)
+#define  BFD_DEBUG_DEBUG           (1 << 3)
+
 /* Peer Information */
 struct bfd_nl_peerinfo
 {
+#if defined (__NetBSD__)
+	SIMPLEQ_ENTRY(bfd_nl_peerinfo) sendq;
+#endif
 	u_int8_t is1hop;
 	u_int8_t state;
 	u_int16_t pad2;
@@ -98,11 +111,12 @@ struct bfd_nl_linkinfo
 	u_int32_t mult;
 };
 
+#if defined (linux)
 #ifdef __KERNEL__
 int bfd_netlink_init(void);
 void bfd_netlink_finish(void);
 void bfd_nl_send(struct bfd_session *);
 #endif /* __KERNEL__ */
-
+#endif
 
 #endif /* __KBFD_NETLNIK_H_ */

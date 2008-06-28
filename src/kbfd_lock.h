@@ -29,7 +29,7 @@ typedef spinlock_t bfd_lock_t;
 #elif __NetBSD__
 typedef struct simplelock bfd_lock_t;
 #define DEFINE_LOCK(X)							\
-	bfd_lock_t (X) = SIMPLELOCK_INITIALIZER;
+	bfd_lock_t (X) = SIMPLELOCK_INITIALIZER
 #endif	/* __NetBSD__ */
 
 #ifdef __NetBSD__

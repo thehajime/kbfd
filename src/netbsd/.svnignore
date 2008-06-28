@@ -1,0 +1,10 @@
+*.d
+*.c
+*.o
+*.h
+.depend
+test
+x86
+i386
+machine
+kbfd

@@ -133,7 +133,7 @@ bfd_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 	struct bfd_nl_linkinfo *link;
 	int err = 0;
 
-	if (IS_DEBUG_NETLINK){
+	if (IS_DEBUG_UIO){
 		blog_debug("bfd_nl_rcv: type=%d, len=%d, ack=%d",
 				   nlh->nlmsg_type,
 				   nlh->nlmsg_len,
@@ -220,7 +220,7 @@ bfd_nl_rcv_skb(struct sk_buff *skb)
 		err = bfd_nl_rcv_msg(skb, nlh);
 
 		if (err || nlh->nlmsg_flags & NLM_F_ACK){
-			if (IS_DEBUG_NETLINK)
+			if (IS_DEBUG_UIO)
 				blog_debug("bfd_nl: send ack");
 			netlink_ack(skb, nlh, err);
 		}
