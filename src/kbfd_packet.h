@@ -24,7 +24,7 @@
 #ifndef _BFD_PACKET_H
 #define _BFD_PACKET_H
 
-#include "kbfd.h"
+#include "kbfd_var.h"
 
 /* Versions */
 #define    BFD_VERSION_0    0

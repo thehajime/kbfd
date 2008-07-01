@@ -30,14 +30,12 @@
 #include "kbfd_log.h"
 #include "kbfd_lock.h"
 #include "kbfd_memory.h"
-#include "kbfd.h"
-#if defined (__NetBSD__)
-#include "kbfd_uio.h"
-#endif
+#include "kbfd_var.h"
+#include "kbfd_ioctl.h"
 
 struct bfd_master *master = NULL;
 static
-#ifdef linux
+#if defined __linux__
 int __init
 #elif defined __NetBSD__
 void
@@ -55,15 +53,12 @@ bfd_init(void){
 
 	memset(master, 0, sizeof(struct bfd_master));
 
-#ifdef linux
-	bfd_netlink_init();
-#elif defined (__NetBSD__)
-	bfd_ioctl_init();
-#endif
+	bfd_uio_init();
 	bfd_v4v6_init();
 	bfd_session_init();
 
-	blog_info("BFD: kbfd start");
+	blog_info("BFD: kbfd %s start. clock hz=%d", 
+	    KBFD_VERSION, HZ);
 #if defined linux
 	return ENOMEM;
 #elif defined __NetBSD__
@@ -79,11 +74,7 @@ bfd_exit(void)
 {
 	bfd_session_finish();
 	bfd_v4v6_finish();
-#ifdef linux
-	bfd_netlink_finish();
-#elif defined (__NetBSD__)
-	bfd_ioctl_finish();
-#endif
+	bfd_uio_finish();
 
 	if (master)
 		bfd_free(master);
@@ -104,15 +95,15 @@ int kbfd_lkmentry(struct lkm_table *, int, int);
 /* device struct */
 static struct cdevsw kbfd_dev = {
 	bfd_open, 
-		bfd_close,
-		bfd_read,
-		(dev_type_write((*))) enodev,
-		bfd_ioctl,
-		(dev_type_stop((*))) enodev, 
-		(dev_type_tty((*))) enodev,
-		bfd_poll,
-		(dev_type_mmap((*))) enodev,
-		nokqfilter, 0
+	bfd_close,
+	bfd_read,
+	(dev_type_write((*))) enodev,
+	bfd_ioctl,
+	(dev_type_stop((*))) enodev, 
+	(dev_type_tty((*))) enodev,
+	bfd_poll,
+	(dev_type_mmap((*))) enodev,
+	nokqfilter, 0
 };
 
 extern int kbfd_refcnt;

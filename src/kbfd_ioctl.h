@@ -23,6 +23,8 @@
 #ifndef __BFD_UIO_H__
 #define __BFD_UIO_H__
 
+#if defined (__NetBSD__)
+
 struct kbfd_softc{
 	int sc_refcnt;
 	struct selinfo r_sel;
@@ -44,4 +46,5 @@ int bfd_ioctl_finish(void);
 
 void bfd_ioctl_send(struct bfd_session *);
 
+#endif /* (__NetBSD__) */
 #endif /* __BFD_UIO_H__ */

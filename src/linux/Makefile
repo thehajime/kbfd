@@ -6,13 +6,13 @@ list-m=kbfd
 VERSION=0.1
 
 DIST_FILES := kbfd_session.[ch] kbfd_packet.[ch] kbfd_main.c kbfd_log.[ch]\
-	 kbfd_v4v6.[ch] kbfd_netlink.[ch] kbfd_interface.[ch] kbfd.h \
+	 kbfd_v4v6_linux.c kbfd_v4v6.h kbfd_netlink.[ch] kbfd_interface.[ch] kbfd.h \
 	Makefile README KNOWN_BUGS
 
 
 ifneq ($(KERNELRELEASE),)
 obj-m	:=$(TARGET)
-kbfd-objs := kbfd_session.o kbfd_packet.o kbfd_main.o kbfd_log.o kbfd_v4v6.o \
+kbfd-objs := kbfd_session.o kbfd_packet.o kbfd_main.o kbfd_log.o kbfd_v4v6_linux.o \
 	kbfd_netlink.o kbfd_interface.o kbfd_memory.o kbfd_queue.o kbfd_lock.o
 
 else

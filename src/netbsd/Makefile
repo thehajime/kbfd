@@ -1,9 +1,9 @@
 S?=             /ext/kern/shisa-netbsd/src/sys
 MKMAN=          no
 KMOD?=          kbfd
-SRCS=           kbfd_main.c kbfd_packet.c kbfd_v4v6.c kbfd_interface.c \
+SRCS=           kbfd_main.c kbfd_packet.c kbfd_v4v6_netbsd.c kbfd_interface.c \
 		kbfd_memory.c kbfd_queue.c kbfd_log.c kbfd_session.c \
-		kbfd_lock.c kbfd_uio.c 
+		kbfd_lock.c kbfd_ioctl.c 
 WARNS?=         1
 CPPFLAGS+=      -nostdinc
 CFLAGS+= -g

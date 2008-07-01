@@ -23,6 +23,7 @@
 #ifndef __KBFD_NETLNIK_H_
 #define __KBFD_NETLNIK_H_
 
+#define KBFD_VERSION "0.2"
 
 /* Protocol Name Define FIXME */
 #ifdef linux
@@ -111,12 +112,10 @@ struct bfd_nl_linkinfo
 	u_int32_t mult;
 };
 
-#if defined (linux)
-#ifdef __KERNEL__
-int bfd_netlink_init(void);
-void bfd_netlink_finish(void);
-void bfd_nl_send(struct bfd_session *);
+#if defined (__KERNEL__) || (_KERNEL)
+int bfd_uio_init(void);
+void bfd_uio_finish(void);
+void bfd_user_notify(struct bfd_session *);
 #endif /* __KERNEL__ */
-#endif
 
 #endif /* __KBFD_NETLNIK_H_ */

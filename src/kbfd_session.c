@@ -30,12 +30,10 @@
 #include "kbfd_interface.h"
 #include "kbfd_memory.h"
 #include "kbfd_lock.h"
-#include "kbfd.h"
-#if defined (__NetBSD__)
-#include "kbfd_uio.h"
-#endif
+#include "kbfd_var.h"
+#include "kbfd_ioctl.h"
 
-#ifdef linux
+#if defined linux
 static struct proc_dir_entry *kbfd_root_dir = NULL;
 static struct proc_dir_entry *session_proc = NULL;
 #endif	/* linux */
@@ -72,7 +70,7 @@ get_sys_uptime(void)
 {
 	struct timespec ts;
 
-#ifdef linux
+#if defined linux
 	ktime_get_ts(&ts);
 #elif defined __NetBSD__
 	nanouptime(&ts);
@@ -141,7 +139,7 @@ bfd_session_new(struct bfd_proto *proto, struct sockaddr *dst, int ifindex)
 		bfd->proto->create_ctrl_socket(bfd);
 
 		/* set output interface, Is it required???? */
-#ifdef linux
+#if defined linux
 		bfd->tx_ctrl_sock->sk->sk_bound_dev_if = ifindex;
 #endif	/* linux */
 	}
@@ -304,7 +302,7 @@ bfd_session_delete(struct bfd_proto *proto, struct sockaddr *dst, int ifindex)
 	bfd_stop_xmit_timer(bfd1);
 	bfd_stop_expire_timer(bfd1);
 
-#ifdef linux
+#if defined linux
 	sock_release(bfd1->tx_ctrl_sock);
 #elif defined __NetBSD__
 	soclose(bfd1->tx_ctrl_sock);
@@ -336,7 +334,7 @@ bfd_start_xmit_timer(struct bfd_session *bfd)
 	int jitter;
 
 	/* jitter is 0% -> 25%. if detectmult == 1, max 90% */
-#ifdef linux
+#if defined linux
 	get_random_bytes(&jitter, 4);
 #elif defined __NetBSD__
 	rnd_extract_data(&jitter, 4, RND_EXTRACT_ANY);
@@ -576,12 +574,8 @@ bfd_bsm_event(struct bfd_session *bfd, int bsm_event)
 					  bfd_state_string[bfd->cpkt.state],
 					  bfd_event_string[bsm_event]);
 
-			/* notify netlink user */
-#ifdef linux
-			bfd_nl_send(bfd);
-#elif defined __NetBSD__
-			bfd_ioctl_send(bfd);
-#endif	/* __NetBSD__ */
+			/* notify user-land */
+			bfd_user_notify(bfd);
 		}
 		else if (IS_DEBUG_BSM){
 			blog_info("%s Sta Chg %s=>%s(%s)", 
@@ -624,7 +618,7 @@ bfd_bsm_event(struct bfd_session *bfd, int bsm_event)
 }
 
 
-#ifdef linux
+#if defined linux
 static int
 proc_session_read(char *page, char **start, off_t off, 
 				  int count, int *eof, void *data)
@@ -722,7 +716,7 @@ bfd_session_init(void)
 	}
 
 	/* proc fs */
-#ifdef linux
+#if defined linux
 	kbfd_root_dir = proc_mkdir("kbfd", &proc_root);
 	if (!kbfd_root_dir){
 		blog_err("kbfd init fail(proc)...:");
@@ -747,7 +741,7 @@ bfd_session_finish(void)
 {
 	int i = 0;
 
-#ifdef linux
+#if defined linux
 	if(kbfd_root_dir){
 		if(session_proc)
 			remove_proc_entry("session", kbfd_root_dir);

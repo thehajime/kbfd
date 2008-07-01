@@ -28,10 +28,12 @@
 #include "kbfd_session.h"
 #include "kbfd_log.h"
 #include "kbfd_netlink.h"
-#include "kbfd.h"
+#include "kbfd_var.h"
 
 extern struct bfd_master *master;
 
+
+#if defined (linux)
 int
 bfd_send_ctrl_packet(struct bfd_session *bfd)
 {
@@ -39,36 +41,22 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
 	struct iovec iov;
 	struct bfd_ctrl_packet pkt;
 	char buf[256];
-#ifdef linux
 	struct msghdr msg;
 	mm_segment_t oldfs;
 	struct sched_param param;
 	static int init = 0;
-#endif /* linux */
-
-#ifdef __NetBSD__
-	struct in6_pktinfo *pinfo;
-	struct cmsghdr *cmsgptr;
-	struct mbuf *control, *to;
-	int *hoplimit;
-	struct uio	auio;
-	int cmsglen = CMSG_SPACE(sizeof(*pinfo)) + CMSG_SPACE(sizeof(int));
-#endif	/* __NetBSD__ */
 
 	/* Set scheduler(FIXME) */
-#ifdef linux
 	if (init == 0){
 		param.sched_priority = MAX_RT_PRIO - 1;
 		sched_setscheduler(current, SCHED_FIFO, &param);
 		init++;
 	}
-#endif /* linux */
 
 	memcpy(&pkt, &bfd->cpkt, sizeof(struct bfd_ctrl_packet));
 	iov.iov_base = &pkt;
 	iov.iov_len  = sizeof(struct bfd_ctrl_packet);
 
-#ifdef linux
 	memset(&msg, 0, sizeof(struct msghdr));
 	msg.msg_control = NULL;
 	msg.msg_controllen = 0;
@@ -76,7 +64,44 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
 	msg.msg_iovlen = 1;
 	msg.msg_name = bfd->dst;
 	msg.msg_namelen = bfd->proto->namelen(bfd->dst);
-#elif defined __NetBSD__
+
+	oldfs = get_fs(); 
+	set_fs(KERNEL_DS);
+	if (IS_DEBUG_CTRL_PACKET)
+		blog_info("SEND=>: Ctrl Pkt to %s",
+				  bfd->proto->addr_print(bfd->dst, buf));
+
+	err = sock_sendmsg(bfd->tx_ctrl_sock, &msg, iov.iov_len);
+	if (err < 0)
+		blog_err("sock_sendmsg returned: %d", err);
+	set_fs(oldfs);
+
+	/* Packet Count */
+	bfd->pkt_out++;
+	/* force final bit set to 0 */
+	bfd->cpkt.final = 0;
+
+	return err;
+}
+#elif defined (__NetBSD__)
+int
+bfd_send_ctrl_packet(struct bfd_session *bfd)
+{
+	int err = 0;
+	struct iovec iov;
+	struct bfd_ctrl_packet pkt;
+	char buf[256];
+	struct in6_pktinfo *pinfo;
+	struct cmsghdr *cmsgptr;
+	struct mbuf *control, *to;
+	int *hoplimit;
+	struct uio	auio;
+	int cmsglen = CMSG_SPACE(sizeof(*pinfo)) + CMSG_SPACE(sizeof(int));
+
+	memcpy(&pkt, &bfd->cpkt, sizeof(struct bfd_ctrl_packet));
+	iov.iov_base = &pkt;
+	iov.iov_len  = sizeof(struct bfd_ctrl_packet);
+
 	/* control */
 	control = m_get(M_WAIT, MT_CONTROL);
 	MCLAIM(control, bfd->tx_ctrl_sock->so_mowner);
@@ -114,33 +139,20 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
 	auio.uio_offset = 0;			/* XXX */
 	auio.uio_resid = iov.iov_len;
 	auio.uio_vmspace = curlwp->l_proc->p_vmspace;
-#endif	/* __NetBSD__ */
 	
-	
-#ifdef linux
-	oldfs = get_fs(); 
-	set_fs(KERNEL_DS);
-#endif  /* linux */
 	if (IS_DEBUG_CTRL_PACKET)
 		blog_info("SEND=>: Ctrl Pkt to %s",
 				  bfd->proto->addr_print(bfd->dst, buf));
-#ifdef linux
-	err = sock_sendmsg(bfd->tx_ctrl_sock, &msg, iov.iov_len);
-	if (err < 0)
-#elif defined __NetBSD__
-        /* FIXME */
+
 	err = (*bfd->tx_ctrl_sock->so_send)(bfd->tx_ctrl_sock, 
 	    to, &auio, NULL, control, 0, curlwp);
 	if (err != 0)
-#endif /* __NetBSD__ */
 		blog_err("sock_sendmsg returned: %d", err);
-#ifdef  linux
-	set_fs(oldfs);
-#elif defined (__NetBSD__)
+
 	/* Protocol is responsible for freeing 'control' */
 	control = NULL;
 	m_free(to);
-#endif
+
 	/* Packet Count */
 	bfd->pkt_out++;
 	/* force final bit set to 0 */
@@ -148,6 +160,7 @@ bfd_send_ctrl_packet(struct bfd_session *bfd)
 
 	return err;
 }
+#endif	/* __NetBSD__ */
 
 int
 bfd_recv_ctrl_packet(struct bfd_proto *proto, struct sockaddr *src, 

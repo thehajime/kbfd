@@ -30,7 +30,7 @@
 #include "kbfd_netlink.h"
 #include "kbfd_interface.h"
 #include "kbfd_log.h"
-#include "kbfd.h"
+#include "kbfd_var.h"
 
 static struct sock *bfd_nls = NULL;
 static unsigned long bfd_nl_seq = 0;
@@ -244,7 +244,7 @@ bfd_nl_rcv(struct sock *sk, int len)
 
 /* Notify function */
 void
-bfd_nl_send(struct bfd_session *bfd)
+bfd_user_notify(struct bfd_session *bfd)
 {
 	unsigned int size;
 	struct sk_buff *skb;
@@ -280,7 +280,7 @@ nlmsg_failure:
 
 
 int
-bfd_netlink_init(void)
+bfd_uio_init(void)
 {
 	bfd_nls = netlink_kernel_create(NETLINK_BFD, 1, bfd_nl_rcv, THIS_MODULE);
 	if (!bfd_nls) {
@@ -291,7 +291,7 @@ bfd_netlink_init(void)
 }
 
 void
-bfd_netlink_finish(void)
+bfd_uio_finish(void)
 {
 	if (bfd_nls && bfd_nls->sk_socket)
 		sock_release(bfd_nls->sk_socket);

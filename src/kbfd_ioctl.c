@@ -30,7 +30,7 @@
 #include "kbfd_log.h"
 #include "kbfd_lock.h"
 #include "kbfd_memory.h"
-#include "kbfd_uio.h"
+#include "kbfd_ioctl.h"
 
 /* minor devices */
 static struct kbfd_softc kbfd_scs[MAXKBFDDEVS];
@@ -113,7 +113,7 @@ bfd_peer_dump(void *data, struct bfd_nl_peerinfo *peer)
 
 /* Notify function */
 void
-bfd_ioctl_send(struct bfd_session *bfd)
+bfd_user_notify(struct bfd_session *bfd)
 {
 	unsigned int size;
 	struct bfd_nl_peerinfo *peer;
@@ -329,15 +329,15 @@ bfd_poll(dev_t dev, int events, struct lwp *l)
 }
 
 int
-bfd_ioctl_init(void)
+bfd_uio_init(void)
 {
 	memset(kbfd_scs, 0, sizeof(kbfd_scs));
 	return 0;
 }
 
-int
-bfd_ioctl_finish(void)
+void
+bfd_uio_finish(void)
 {
-	return 0;
+	return;
 }
 

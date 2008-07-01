@@ -22,10 +22,10 @@
 
 #include "kbfd_sys.h"
 #include "kbfd_memory.h"
-#include "kbfd_netlink.h"
-#include "kbfd_log.h"
 #include "kbfd_queue.h"
 #include "kbfd_session.h"
+#include "kbfd_netlink.h"
+#include "kbfd_log.h"
 
 #ifdef __NetBSD__
 static void

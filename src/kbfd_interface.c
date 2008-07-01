@@ -28,7 +28,7 @@
 #include "kbfd_session.h"
 #include "kbfd_memory.h"
 #include "kbfd_lock.h"
-#include "kbfd.h"
+#include "kbfd_var.h"
 
 static struct bfd_interface *biflist = NULL;
 static DEFINE_LOCK(bif_lock);

@@ -86,6 +86,7 @@
 
 #define printk printf
 #define jiffies (long unsigned int)hardclock_ticks
+#define HZ hz
 
 #define KERN_DEBUG   "DEBG "
 #define KERN_INFO    "INFO "
