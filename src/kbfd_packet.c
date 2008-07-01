@@ -27,7 +27,7 @@
 #include "kbfd_interface.h"
 #include "kbfd_session.h"
 #include "kbfd_log.h"
-#include "kbfd_netlink.h"
+#include "kbfd.h"
 #include "kbfd_var.h"
 
 extern struct bfd_master *master;

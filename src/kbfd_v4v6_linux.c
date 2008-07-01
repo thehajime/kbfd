@@ -29,7 +29,7 @@
 #include "kbfd_v4v6.h"
 #include "kbfd_memory.h"
 #include "kbfd_log.h"
-#include "kbfd_netlink.h"
+#include "kbfd.h"
 
 struct bfd_session *v4v6_nbr_tbl[BFD_SESSION_HASH_SIZE];
 static DECLARE_COMPLETION(threadcomplete);

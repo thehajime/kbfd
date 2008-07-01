@@ -24,7 +24,7 @@
 
 #include "kbfd_queue.h"
 #include "kbfd_session.h"
-#include "kbfd_netlink.h"
+#include "kbfd.h"
 #include "kbfd_interface.h"
 #include "kbfd_v4v6.h"
 #include "kbfd_log.h"

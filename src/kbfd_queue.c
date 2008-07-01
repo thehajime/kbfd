@@ -24,7 +24,7 @@
 #include "kbfd_memory.h"
 #include "kbfd_queue.h"
 #include "kbfd_session.h"
-#include "kbfd_netlink.h"
+#include "kbfd.h"
 #include "kbfd_log.h"
 
 #ifdef __NetBSD__

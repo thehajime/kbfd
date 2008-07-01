@@ -10,7 +10,7 @@
 #include <sys/queue.h>
 #include <netinet/in.h>
 
-#include "kbfd_netlink.h"
+#include "kbfd.h"
 
 #define DEVICE "/dev/kbfd1"
 
