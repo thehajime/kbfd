@@ -1,0 +1,2385 @@
+Index: configure.ac
+===================================================================
+RCS file: /var/cvsroot/quagga/configure.ac,v
+retrieving revision 1.141
+diff -u -w -b -r1.141 configure.ac
+--- configure.ac	11 Jan 2008 16:33:59 -0000	1.141
++++ configure.ac	29 Jan 2008 06:46:33 -0000
+@@ -248,6 +248,8 @@
+ [  --enable-gcc-rdynamic   enable gcc linking with -rdynamic for better backtraces])
+ AC_ARG_ENABLE(time-check,
+ [  --disable-time-check          disable slow thread warning messages])
++AC_ARG_ENABLE(kbfd-support,
++[  --enable-kbfd-support   enable kbfd support (for Linux netlink only)])
+ 
+ if test x"${enable_gcc_ultra_verbose}" = x"yes" ; then
+   CFLAGS="${CFLAGS} -W -Wcast-qual -Wstrict-prototypes"
+@@ -1114,6 +1116,16 @@
+ # include <netinet6/nd6.h>
+ #endif
+ ])dnl
++
++dnl ----------------------------
++dnl Check kbfd support.
++dnl ----------------------------
++if test "${enable_kbfd_support}" = "yes"; then
++  if test "x$RT_METHOD" != "xrt_netlink.o"; then
++    AC_MSG_ERROR([kbfd supports only netlink kernel interface.])
++  fi
++  AC_DEFINE(HAVE_KBFD,,KBFD Support)
++fi
+ 
+ dnl --------------------
+ dnl Daemon disable check
+Index: bgpd/bgp_fsm.c
+===================================================================
+RCS file: /var/cvsroot/quagga/bgpd/bgp_fsm.c,v
+retrieving revision 1.22
+diff -u -w -b -r1.22 bgp_fsm.c
+--- bgpd/bgp_fsm.c	22 Jun 2007 19:11:14 -0000	1.22
++++ bgpd/bgp_fsm.c	29 Jan 2008 06:46:34 -0000
+@@ -40,6 +40,7 @@
+ #include "bgpd/bgp_route.h"
+ #include "bgpd/bgp_dump.h"
+ #include "bgpd/bgp_open.h"
++#include "bgpd/bgp_zebra.h"
+ #ifdef HAVE_SNMP
+ #include "bgpd/bgp_snmp.h"
+ #endif /* HAVE_SNMP */
+@@ -87,7 +88,12 @@
+       /* First entry point of peer's finite state machine.  In Idle
+ 	 status start timer is on unless peer is shutdown or peer is
+ 	 inactive.  All other timer must be turned off */
+-      if (BGP_PEER_START_SUPPRESSED (peer) || ! peer_active (peer))
++      if (BGP_PEER_START_SUPPRESSED (peer) || ! peer_active (peer)
++#ifdef HAVE_KBFD
++          || (CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE) &&
++              CHECK_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN))
++#endif /*HAVE_KBFD*/
++		  )
+ 	{
+ 	  BGP_TIMER_OFF (peer->t_start);
+ 	}
+@@ -348,6 +354,9 @@
+   "Passive config change",
+   "Multihop config change",
+   "NSF peer closed the session"
++#ifdef HAVE_KBFD
++  "BFD Session Down Detect",
++#endif /*HAVE_KBFD*/
+ };
+ 
+ static int
+@@ -840,6 +849,13 @@
+ 
+   /* Reset uptime, send keepalive, send current table. */
+   bgp_uptime_reset (peer);
++
++#ifdef HAVE_KBFD
++  /* Setup bfd failure detection */
++  if (peer->established == 1 && 
++      CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE))
++    bgp_bfd_peer_add (&peer->su, 0, 1);
++#endif /*HAVE_KBFD*/
+ 
+   /* Send route-refresh when ORF is enabled */
+   for (afi = AFI_IP ; afi < AFI_MAX ; afi++)
+Index: bgpd/bgp_vty.c
+===================================================================
+RCS file: /var/cvsroot/quagga/bgpd/bgp_vty.c,v
+retrieving revision 1.37
+diff -u -w -b -r1.37 bgp_vty.c
+--- bgpd/bgp_vty.c	14 Oct 2007 22:32:21 -0000	1.37
++++ bgpd/bgp_vty.c	29 Jan 2008 06:46:35 -0000
+@@ -3899,6 +3899,30 @@
+ 
+   return bgp_vty_return (vty, ret);
+ }
++#ifdef HAVE_KBFD
++/* "neighbor bfd-enable" */
++DEFUN (neighbor_bfd_enable,
++       neighbor_bfd_enable_cmd,
++       NEIGHBOR_CMD2 "bfd-enable",
++       NEIGHBOR_STR
++       NEIGHBOR_ADDR_STR2
++       "Enable BFD Fast Detection on this neighbor\n")
++{
++  return peer_flag_set_vty (vty, argv[0], PEER_FLAG_BFD_ENABLE);
++}
++
++DEFUN (no_neighbor_bfd_enable,
++       no_neighbor_bfd_enable_cmd,
++       NO_NEIGHBOR_CMD2 "bfd-enable",
++       NO_STR
++       NEIGHBOR_STR
++       NEIGHBOR_ADDR_STR2
++       "Enable BFD Fast Detection on this neighbor\n")
++{
++  return peer_flag_unset_vty (vty, argv[0], PEER_FLAG_BFD_ENABLE);
++}
++#endif /*HAVE_KBFD*/
++
+ 
+ /* Address family configuration.  */
+ DEFUN (address_family_ipv4,
+@@ -6697,6 +6721,10 @@
+ 		vty_out (vty, " Idle (Admin)");
+ 	      else if (CHECK_FLAG (peer->sflags, PEER_STATUS_PREFIX_OVERFLOW))
+ 		vty_out (vty, " Idle (PfxCt)");
++#ifdef HAVE_KBFD
++	      else if (CHECK_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN))
++		vty_out (vty, " Idle (Bfd)");
++#endif /*HAVE_KBFD*/
+ 	      else
+ 		vty_out (vty, " %-11s", LOOKUP(bgp_status_msg, peer->status));
+ 	    }
+@@ -7207,6 +7235,12 @@
+   if (CHECK_FLAG (p->flags, PEER_FLAG_SHUTDOWN))
+     vty_out (vty, " Administratively shut down%s", VTY_NEWLINE);
+ 
++#ifdef HAVE_KBFD
++  /* BFD Down detection. */
++  if (CHECK_FLAG (p->sflags, PEER_FLAG_SHUTDOWN))
++    vty_out (vty, " BFD Failure%s", VTY_NEWLINE);
++#endif /*HAVE_KBFD*/
++
+   /* BGP Version. */
+   vty_out (vty, "  BGP version 4");
+   vty_out (vty, ", remote router ID %s%s", 
+@@ -9451,6 +9485,12 @@
+   install_element (BGP_VPNV4_NODE, &neighbor_allowas_in_cmd);
+   install_element (BGP_VPNV4_NODE, &neighbor_allowas_in_arg_cmd);
+   install_element (BGP_VPNV4_NODE, &no_neighbor_allowas_in_cmd);
++
++#ifdef HAVE_KBFD
++  /* "neighbor bfd-enable" */
++  install_element (BGP_NODE, &neighbor_bfd_enable_cmd);
++  install_element (BGP_NODE, &no_neighbor_bfd_enable_cmd);
++#endif /*HAVE_KBFD*/
+ 
+   /* address-family commands. */
+   install_element (BGP_NODE, &address_family_ipv4_cmd);
+Index: bgpd/bgp_zebra.c
+===================================================================
+RCS file: /var/cvsroot/quagga/bgpd/bgp_zebra.c,v
+retrieving revision 1.13
+diff -u -w -b -r1.13 bgp_zebra.c
+--- bgpd/bgp_zebra.c	4 May 2007 20:15:47 -0000	1.13
++++ bgpd/bgp_zebra.c	29 Jan 2008 06:46:35 -0000
+@@ -381,6 +381,83 @@
+ }
+ #endif /* HAVE_IPV6 */
+ 
++#ifdef HAVE_KBFD
++int
++bgp_bfd_peer_add (union sockunion *su, int ifindex, u_char type)
++{
++  zapi_bfd_peer_add (zclient, su, ifindex, type);
++  return 0;
++}
++
++int
++bgp_bfd_peer_delete (union sockunion *su, int ifindex, u_char type)
++{
++  zapi_bfd_peer_delete (zclient, su, ifindex, type);
++  return 0;
++}
++
++static int
++bgp_bfd_peer_up (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct peer *peer;
++  struct bgp *bgp;
++  struct listnode *nn;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  for (ALL_LIST_ELEMENTS_RO (bm->bgp, nn, bgp)) {
++	  peer = peer_lookup (bgp, &su);
++	  if (!peer)
++		  continue;
++
++	  zlog_info ("Detect BFD Peer Up %s", sockunion_log (&su));
++	  BGP_EVENT_ADD (peer, BGP_Start);
++      UNSET_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN);
++  }
++
++  return 0;
++}
++
++static int
++bgp_bfd_peer_down (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct peer *peer;
++  struct bgp *bgp;
++  struct listnode *nn;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  for (ALL_LIST_ELEMENTS_RO (bm->bgp, nn, bgp)) {
++	  peer = peer_lookup (bgp, &su);
++	  if (!peer)
++		  continue;
++
++	  zlog_info ("Detect BFD Peer Down %s", sockunion_log (&su));
++	  BGP_EVENT_ADD (peer, BGP_Stop);
++      SET_FLAG (peer->sflags, PEER_STATUS_BFD_DOWN);
++	  peer->last_reset = PEER_DOWN_BFD_SESSION_DOWN;
++  }
++
++  return 0;
++}
++#endif /*HAVE_KBFD*/
++
+ struct interface *
+ if_lookup_by_ipv4 (struct in_addr *addr)
+ {
+@@ -1073,6 +1150,10 @@
+   zclient->ipv6_route_add = zebra_read_ipv6;
+   zclient->ipv6_route_delete = zebra_read_ipv6;
+ #endif /* HAVE_IPV6 */
++#ifdef HAVE_KBFD
++  zclient->bfd_peer_up = bgp_bfd_peer_up;
++  zclient->bfd_peer_down = bgp_bfd_peer_down;
++#endif /*HAVE_KBFD*/
+ 
+   /* Interface related init. */
+   if_init ();
+Index: bgpd/bgp_zebra.h
+===================================================================
+RCS file: /var/cvsroot/quagga/bgpd/bgp_zebra.h,v
+retrieving revision 1.4
+diff -u -w -b -r1.4 bgp_zebra.h
+--- bgpd/bgp_zebra.h	28 Jun 2005 12:44:17 -0000	1.4
++++ bgpd/bgp_zebra.h	29 Jan 2008 06:46:35 -0000
+@@ -42,4 +42,9 @@
+ extern struct interface *if_lookup_by_ipv6_exact (struct in6_addr *);
+ #endif /* HAVE_IPV6 */
+ 
++#ifdef HAVE_KBFD
++int bgp_bfd_peer_add (union sockunion *, int, u_char);
++int bgp_bfd_peer_delete (union sockunion *, int, u_char);
++#endif /*HAVE_KBFD*/
++
+ #endif /* _QUAGGA_BGP_ZEBRA_H */
+Index: bgpd/bgpd.c
+===================================================================
+RCS file: /var/cvsroot/quagga/bgpd/bgpd.c,v
+retrieving revision 1.38
+diff -u -w -b -r1.38 bgpd.c
+--- bgpd/bgpd.c	1 Nov 2007 14:29:11 -0000	1.38
++++ bgpd/bgpd.c	29 Jan 2008 06:46:35 -0000
+@@ -1195,6 +1195,13 @@
+       peer->group = NULL;
+     }
+   
++#ifdef HAVE_KBFD
++  /* Unregister bfd failure detection */
++  if (!CHECK_FLAG (peer->sflags, PEER_STATUS_ACCEPT_PEER) &&
++      CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE))
++    bgp_bfd_peer_delete (&peer->su, 0, 1);
++#endif /*HAVE_KBFD*/
++
+   /* Withdraw all information from routing table.  We can not use
+    * BGP_EVENT_ADD (peer, BGP_Stop) at here.  Because the event is
+    * executed after peer structure is deleted.
+@@ -2208,6 +2215,9 @@
+     { PEER_FLAG_STRICT_CAP_MATCH,         0, peer_change_none },
+     { PEER_FLAG_DYNAMIC_CAPABILITY,       0, peer_change_reset },
+     { PEER_FLAG_DISABLE_CONNECTED_CHECK,  0, peer_change_reset },
++#ifdef HAVE_KBFD
++    { PEER_FLAG_BFD_ENABLE,               0, peer_change_reset },
++#endif /*HAVE_KBFD*/
+     { 0, 0, 0 }
+   };
+ 
+@@ -2314,6 +2324,16 @@
+ 	  BGP_EVENT_ADD (peer, BGP_Stop);
+ 	}
+     }
++#ifdef HAVE_KBFD
++  else if (flag == PEER_FLAG_BFD_ENABLE)
++    {
++      /* if flag unset */
++      if (!CHECK_FLAG (peer->flags, flag))
++        bgp_bfd_peer_delete (&peer->su, 0, 1);
++      else
++        bgp_bfd_peer_add (&peer->su, 0, 1);
++    }
++#endif /*HAVE_KBFD*/
+   else if (peer->status == Established)
+     {
+       if (flag == PEER_FLAG_DYNAMIC_CAPABILITY)
+@@ -4508,6 +4528,14 @@
+ 	    ! CHECK_FLAG (g_peer->flags, PEER_FLAG_STRICT_CAP_MATCH))
+ 	vty_out (vty, " neighbor %s strict-capability-match%s", addr,
+ 	     VTY_NEWLINE);
++
++#ifdef HAVE_KBFD
++	  /* bfd function. */
++	  if (CHECK_FLAG (peer->flags, PEER_FLAG_BFD_ENABLE))
++		if (! peer_group_active (peer) ||
++			! CHECK_FLAG (g_peer->flags, PEER_FLAG_BFD_ENABLE))
++		  vty_out (vty, " neighbor %s bfd-enable%s", addr, VTY_NEWLINE);
++#endif /*HAVE_KBFD*/
+ 
+       if (! peer_group_active (peer))
+ 	{
+Index: bgpd/bgpd.h
+===================================================================
+RCS file: /var/cvsroot/quagga/bgpd/bgpd.h,v
+retrieving revision 1.31
+diff -u -w -b -r1.31 bgpd.h
+--- bgpd/bgpd.h	1 Nov 2007 14:29:11 -0000	1.31
++++ bgpd/bgpd.h	29 Jan 2008 06:46:35 -0000
+@@ -355,6 +355,9 @@
+ #define PEER_FLAG_DYNAMIC_CAPABILITY        (1 << 5) /* dynamic capability */
+ #define PEER_FLAG_DISABLE_CONNECTED_CHECK   (1 << 6) /* disable-connected-check */
+ #define PEER_FLAG_LOCAL_AS_NO_PREPEND       (1 << 7) /* local-as no-prepend */
++#ifdef HAVE_KBFD
++#define PEER_FLAG_BFD_ENABLE                (1 << 8) /* bfd-enable */
++#endif /*HAVE_KBFD*/
+ 
+   /* NSF mode (graceful restart) */
+   u_char nsf[AFI_MAX][SAFI_MAX];
+@@ -395,6 +398,9 @@
+ #define PEER_STATUS_GROUP             (1 << 4) /* peer-group conf */
+ #define PEER_STATUS_NSF_MODE          (1 << 5) /* NSF aware peer */
+ #define PEER_STATUS_NSF_WAIT          (1 << 6) /* wait comeback peer */
++#ifdef HAVE_KBFD
++#define PEER_STATUS_BFD_DOWN          (1 << 7) /* detect bfd failure */
++#endif /*HAVE_KBFD*/
+ 
+   /* Peer status af flags (reset in bgp_stop) */
+   u_int16_t af_sflags[AFI_MAX][SAFI_MAX];
+@@ -521,6 +527,9 @@
+ #define PEER_DOWN_PASSIVE_CHANGE        20 /* neighbor passive command */
+ #define PEER_DOWN_MULTIHOP_CHANGE       21 /* neighbor multihop command */
+ #define PEER_DOWN_NSF_CLOSE_SESSION     22 /* NSF tcp session close */
++#ifdef HAVE_KBFD
++#define PEER_DOWN_BFD_SESSION_DOWN      23 /* BFD Session Down Detect */
++#endif /*HAVE_KBFD*/
+ 
+   /* The kind of route-map Flags.*/
+   u_char rmap_type;
+Index: lib/log.c
+===================================================================
+RCS file: /var/cvsroot/quagga/lib/log.c,v
+retrieving revision 1.33
+diff -u -w -b -r1.33 log.c
+--- lib/log.c	6 Aug 2007 15:21:45 -0000	1.33
++++ lib/log.c	29 Jan 2008 06:46:36 -0000
+@@ -834,6 +834,12 @@
+   DESC_ENTRY	(ZEBRA_ROUTER_ID_ADD),
+   DESC_ENTRY	(ZEBRA_ROUTER_ID_DELETE),
+   DESC_ENTRY	(ZEBRA_ROUTER_ID_UPDATE),
++#ifdef HAVE_KBFD
++  DESC_ENTRY	(ZEBRA_BFD_PEER_ADD),
++  DESC_ENTRY	(ZEBRA_BFD_PEER_DELETE),
++  DESC_ENTRY	(ZEBRA_BFD_PEER_UP),
++  DESC_ENTRY	(ZEBRA_BFD_PEER_DOWN),
++#endif /*HAVE_KBFD*/
+ };
+ #undef DESC_ENTRY
+ 
+Index: lib/memtypes.c
+===================================================================
+RCS file: /var/cvsroot/quagga/lib/memtypes.c,v
+retrieving revision 1.12
+diff -u -w -b -r1.12 memtypes.c
+--- lib/memtypes.c	4 May 2007 20:15:47 -0000	1.12
++++ lib/memtypes.c	29 Jan 2008 06:46:36 -0000
+@@ -85,6 +85,7 @@
+   { MTYPE_RIB_QUEUE,		"RIB process work queue"	},
+   { MTYPE_STATIC_IPV4,		"Static IPv4 route"		},
+   { MTYPE_STATIC_IPV6,		"Static IPv6 route"		},
++  { MTYPE_BFD_PEER,		"BFD Peer"			},
+   { -1, NULL },
+ };
+ 
+Index: lib/sockunion.c
+===================================================================
+RCS file: /var/cvsroot/quagga/lib/sockunion.c,v
+retrieving revision 1.13
+diff -u -w -b -r1.13 sockunion.c
+--- lib/sockunion.c	10 May 2007 02:38:51 -0000	1.13
++++ lib/sockunion.c	29 Jan 2008 06:46:36 -0000
+@@ -294,7 +294,7 @@
+ }
+ 
+ /* return sockunion structure : this function should be revised. */
+-static char *
++char *
+ sockunion_log (union sockunion *su)
+ {
+   static char buf[SU_ADDRSTRLEN];
+Index: lib/sockunion.h
+===================================================================
+RCS file: /var/cvsroot/quagga/lib/sockunion.h,v
+retrieving revision 1.4
+diff -u -w -b -r1.4 sockunion.h
+--- lib/sockunion.h	6 May 2005 21:25:49 -0000	1.4
++++ lib/sockunion.h	29 Jan 2008 06:46:36 -0000
+@@ -111,6 +111,7 @@
+ extern union sockunion *sockunion_getpeername (int);
+ extern union sockunion *sockunion_dup (union sockunion *);
+ extern void sockunion_free (union sockunion *);
++char *sockunion_log (union sockunion *);
+ 
+ #ifndef HAVE_INET_NTOP
+ extern const char * inet_ntop (int family, const void *addrptr, 
+Index: lib/zclient.c
+===================================================================
+RCS file: /var/cvsroot/quagga/lib/zclient.c,v
+retrieving revision 1.23
+diff -u -w -b -r1.23 zclient.c
+--- lib/zclient.c	10 May 2007 02:38:51 -0000	1.23
++++ lib/zclient.c	29 Jan 2008 06:46:36 -0000
+@@ -22,6 +22,7 @@
+ 
+ #include <zebra.h>
+ 
++#include "sockunion.h"
+ #include "prefix.h"
+ #include "stream.h"
+ #include "buffer.h"
+@@ -535,6 +536,66 @@
+ }
+ #endif /* HAVE_IPV6 */
+ 
++#ifdef HAVE_KBFD
++/* bfd peer function */
++int
++zapi_bfd_peer_add (struct zclient *zclient, union sockunion *su, 
++		   int ifindex, u_char type)
++{
++  struct stream *s;
++
++  /* Reset stream. */
++  s = zclient->obuf;
++  stream_reset (s);
++
++  zclient_create_header (s, ZEBRA_BFD_PEER_ADD);
++
++  /* peer address */
++  stream_write (s, (u_char *)su, sizeof (union sockunion));
++  /* ifindex */
++  stream_putl (s, ifindex);
++  /* application id */
++  stream_putc (s, zclient->redist_default);
++  /* peer type */
++  stream_putc (s, type);
++
++  /* Put length at the first point of the stream. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  zlog_info ("BFD: peer add %s", sockunion_su2str (su));
++  return writen (zclient->sock, s->data, stream_get_endp (s));
++}
++
++/* bfd peer function */
++int
++zapi_bfd_peer_delete (struct zclient *zclient, union sockunion *su, 
++		      int ifindex, u_char type)
++{
++  struct stream *s;
++
++  /* Reset stream. */
++  s = zclient->obuf;
++  stream_reset (s);
++
++  zclient_create_header (s, ZEBRA_BFD_PEER_DELETE);
++  
++  /* peer address */
++  stream_write (s, (u_char *)su, sizeof (union sockunion));
++  /* ifindex */
++  stream_putl (s, ifindex);
++  /* application id */
++  stream_putc (s, zclient->redist_default);
++  /* peer type */
++  stream_putc (s, type);
++
++  /* Put length at the first point of the stream. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  zlog_info ("BFD: peer delete %s", sockunion_su2str (su));
++  return writen (zclient->sock, s->data, stream_get_endp (s));
++}
++#endif /*HAVE_KBFD*/
++
+ /* 
+  * send a ZEBRA_REDISTRIBUTE_ADD or ZEBRA_REDISTRIBUTE_DELETE
+  * for the route type (ZEBRA_ROUTE_KERNEL etc.). The zebra server will
+@@ -937,6 +998,16 @@
+       if (zclient->ipv6_route_delete)
+ 	ret = (*zclient->ipv6_route_delete) (command, zclient, length);
+       break;
++#ifdef HAVE_KBFD
++    case ZEBRA_BFD_PEER_UP:
++      if (zclient->bfd_peer_up)
++	ret = (*zclient->bfd_peer_up) (command, zclient, length);
++      break;
++    case ZEBRA_BFD_PEER_DOWN:
++      if (zclient->bfd_peer_down)
++	ret = (*zclient->bfd_peer_down) (command, zclient, length);
++      break;
++#endif /*HAVE_KBFD*/
+     default:
+       break;
+     }
+Index: lib/zclient.h
+===================================================================
+RCS file: /var/cvsroot/quagga/lib/zclient.h,v
+retrieving revision 1.8
+diff -u -w -b -r1.8 zclient.h
+--- lib/zclient.h	17 Jan 2006 17:43:18 -0000	1.8
++++ lib/zclient.h	29 Jan 2008 06:46:36 -0000
+@@ -24,6 +24,7 @@
+ 
+ /* For struct interface and struct connected. */
+ #include "if.h"
++#include "sockunion.h"
+ 
+ /* For input/output buffer to zebra. */
+ #define ZEBRA_MAX_PACKET_SIZ          4096
+@@ -79,6 +80,10 @@
+   int (*ipv4_route_delete) (int, struct zclient *, uint16_t);
+   int (*ipv6_route_add) (int, struct zclient *, uint16_t);
+   int (*ipv6_route_delete) (int, struct zclient *, uint16_t);
++#ifdef HAVE_KBFD
++  int (*bfd_peer_up) (int, struct zclient *, zebra_size_t);
++  int (*bfd_peer_down) (int, struct zclient *, zebra_size_t);
++#endif /*HAVE_KBFD*/
+ };
+ 
+ /* Zebra API message flag. */
+@@ -181,5 +186,11 @@
+ extern int zapi_ipv6_route (u_char cmd, struct zclient *zclient, 
+                      struct prefix_ipv6 *p, struct zapi_ipv6 *api);
+ #endif /* HAVE_IPV6 */
++
++#ifdef HAVE_KBFD
++/* BFD related function */
++int zapi_bfd_peer_add (struct zclient *, union sockunion *, int, u_char);
++int zapi_bfd_peer_delete (struct zclient *, union sockunion *, int, u_char);
++#endif /*HAVE_KBFD*/
+ 
+ #endif /* _ZEBRA_ZCLIENT_H */
+Index: lib/zebra.h
+===================================================================
+RCS file: /var/cvsroot/quagga/lib/zebra.h,v
+retrieving revision 1.49
+diff -u -w -b -r1.49 zebra.h
+--- lib/zebra.h	11 Jan 2008 15:57:13 -0000	1.49
++++ lib/zebra.h	29 Jan 2008 06:46:36 -0000
+@@ -411,7 +411,16 @@
+ #define ZEBRA_ROUTER_ID_ADD               20
+ #define ZEBRA_ROUTER_ID_DELETE            21
+ #define ZEBRA_ROUTER_ID_UPDATE            22
++#ifdef HAVE_KBFD
++#define ZEBRA_BFD_PEER_ADD                23
++#define ZEBRA_BFD_PEER_DELETE             24
++#define ZEBRA_BFD_PEER_UP                 25
++#define ZEBRA_BFD_PEER_DOWN               26
++#define ZEBRA_MESSAGE_MAX                 27
++#else /*HAVE_KBFD*/
+ #define ZEBRA_MESSAGE_MAX                 23
++#endif /*HAVE_KBFD*/
++
+ 
+ /* Marker value used in new Zserv, in the byte location corresponding
+  * the command value in the old zserv header. To allow old and new
+Index: ospf6d/ospf6_interface.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospf6d/ospf6_interface.c,v
+retrieving revision 1.18
+diff -u -w -b -r1.18 ospf6_interface.c
+--- ospf6d/ospf6_interface.c	15 May 2006 10:46:07 -0000	1.18
++++ ospf6d/ospf6_interface.c	29 Jan 2008 06:46:36 -0000
+@@ -40,6 +40,7 @@
+ #include "ospf6_neighbor.h"
+ #include "ospf6_intra.h"
+ #include "ospf6_spf.h"
++#include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+ unsigned char conf_debug_ospf6_interface = 0;
+@@ -813,8 +814,13 @@
+ 
+   vty_out (vty, "  State %s, Transmit Delay %d sec, Priority %d%s",
+            ospf6_interface_state_str[oi->state],
+-           oi->transdelay, oi->priority,
+-	   VNL);
++           oi->transdelay, oi->priority);
++#ifdef HAVE_KBFD
++  if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE))
++    vty_out (vty, ", BFD enabled");
++#endif /*HAVE_KBFD*/
++  vty_out (vty, "%s", VNL);
++
+   vty_out (vty, "  Timer intervals configured:%s", VNL);
+   vty_out (vty, "   Hello %d, Dead %d, Retransmit %d%s",
+            oi->hello_interval, oi->dead_interval, oi->rxmt_interval,
+@@ -1463,6 +1469,81 @@
+   return CMD_SUCCESS;
+ }
+ 
++#ifdef HAVE_KBFD
++DEFUN (ipv6_ospf6_bfd_enable,
++       ipv6_ospf6_bfd_enable_cmd,
++       "ipv6 ospf6 bfd-enable",
++       IP6_STR
++       OSPF6_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct ospf6_interface *oi;
++  struct interface *ifp;
++  struct listnode *node;
++  struct ospf6_neighbor *on;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  oi = (struct ospf6_interface *) ifp->info;
++  if (oi == NULL)
++    oi = ospf6_interface_create (ifp);
++  assert (oi);
++
++  SET_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE);
++
++  for (node = listhead (oi->neighbor_list); node; listnextnode (node))
++    {
++      on = (struct ospf6_neighbor *) listgetdata (node);
++      if (!CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++        {
++          SET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE);
++          ospf6_bfd_peer_add (on);
++        }
++    }
++
++  return CMD_SUCCESS;
++}
++
++DEFUN (no_ipv6_ospf6_bfd_enable,
++       no_ipv6_ospf6_bfd_enable_cmd,
++       "no ipv6 ospf6 bfd-enable",
++       NO_STR
++       IP6_STR
++       OSPF6_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct ospf6_interface *oi;
++  struct interface *ifp;
++  struct listnode *node;
++  struct ospf6_neighbor *on;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  oi = (struct ospf6_interface *) ifp->info;
++  if (oi == NULL)
++    oi = ospf6_interface_create (ifp);
++  assert (oi);
++
++  UNSET_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE);
++
++  for (node = listhead (oi->neighbor_list); node; listnextnode (node))
++    {
++      on = (struct ospf6_neighbor *) listgetdata (node);
++      if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++        {
++          UNSET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE);
++          ospf6_bfd_peer_delete (on);
++        }
++    }
++
++  return CMD_SUCCESS;
++}
++#endif /*HAVE_KBFD*/
++
+ int
+ config_write_ospf6_interface (struct vty *vty)
+ {
+@@ -1506,6 +1587,11 @@
+       if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_PASSIVE))
+         vty_out (vty, " ipv6 ospf6 passive%s", VNL);
+ 
++#ifdef HAVE_KBFD
++      if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE))
++        vty_out (vty, " ipv6 ospf6 bfd-enable%s", VNL);
++#endif /*HAVE_KBFD*/
++
+       vty_out (vty, "!%s", VNL);
+     }
+   return 0;
+@@ -1560,6 +1646,11 @@
+ 
+   install_element (INTERFACE_NODE, &ipv6_ospf6_advertise_prefix_list_cmd);
+   install_element (INTERFACE_NODE, &no_ipv6_ospf6_advertise_prefix_list_cmd);
++
++#ifdef HAVE_KBFD
++  install_element (INTERFACE_NODE, &ipv6_ospf6_bfd_enable_cmd);
++  install_element (INTERFACE_NODE, &no_ipv6_ospf6_bfd_enable_cmd);
++#endif /*HAVE_KBFD*/
+ }
+ 
+ DEFUN (debug_ospf6_interface,
+Index: ospf6d/ospf6_interface.h
+===================================================================
+RCS file: /var/cvsroot/quagga/ospf6d/ospf6_interface.h,v
+retrieving revision 1.6
+diff -u -w -b -r1.6 ospf6_interface.h
+--- ospf6d/ospf6_interface.h	2 Apr 2005 23:23:55 -0000	1.6
++++ ospf6d/ospf6_interface.h	29 Jan 2008 06:46:36 -0000
+@@ -120,6 +120,9 @@
+ /* flags */
+ #define OSPF6_INTERFACE_DISABLE      0x01
+ #define OSPF6_INTERFACE_PASSIVE      0x02
++#ifdef HAVE_KBFD
++#define OSPF6_INTERFACE_BFD_ENABLE   0x04
++#endif /*HAVE_KBFD*/
+ 
+ 
+ /* Function Prototypes */
+Index: ospf6d/ospf6_message.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospf6d/ospf6_message.c,v
+retrieving revision 1.16
+diff -u -w -b -r1.16 ospf6_message.c
+--- ospf6d/ospf6_message.c	15 May 2006 10:46:07 -0000	1.16
++++ ospf6d/ospf6_message.c	29 Jan 2008 06:46:36 -0000
+@@ -40,6 +40,8 @@
+ #include "ospf6_interface.h"
+ 
+ #include "ospf6_flood.h"
++#include "ospf6_route.h"
++#include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+ unsigned char conf_debug_ospf6_message[6] = {0x03, 0, 0, 0, 0, 0};
+@@ -327,6 +329,23 @@
+   /* always override neighbor's source address and ifindex */
+   on->ifindex = ntohl (hello->interface_id);
+   memcpy (&on->linklocal_addr, src, sizeof (struct in6_addr));
++
++#ifdef HAVE_KBFD
++  if (CHECK_FLAG (oi->flag, OSPF6_INTERFACE_BFD_ENABLE) &&
++      ! CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++    {
++      SET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE);
++      ospf6_bfd_peer_add (on);
++   }
++
++  if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE) &&
++      CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_DOWN))
++    {
++      if (IS_OSPF6_DEBUG_MESSAGE (oh->type, RECV))
++        zlog_info ("BFD State is DOWN. discard");
++      return;
++    }
++#endif /*HAVE_KBFD*/
+ 
+   /* TwoWay check */
+   for (p = (char *) ((caddr_t) hello + sizeof (struct ospf6_hello));
+Index: ospf6d/ospf6_neighbor.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospf6d/ospf6_neighbor.c,v
+retrieving revision 1.13
+diff -u -w -b -r1.13 ospf6_neighbor.c
+--- ospf6d/ospf6_neighbor.c	8 Mar 2007 17:50:01 -0000	1.13
++++ ospf6d/ospf6_neighbor.c	29 Jan 2008 06:46:36 -0000
+@@ -38,6 +38,8 @@
+ #include "ospf6_neighbor.h"
+ #include "ospf6_intra.h"
+ #include "ospf6_flood.h"
++#include "ospf6_route.h"
++#include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+ unsigned char conf_debug_ospf6_neighbor = 0;
+@@ -133,6 +135,11 @@
+   ospf6_lsdb_delete (on->lsupdate_list);
+   ospf6_lsdb_delete (on->lsack_list);
+ 
++#ifdef HAVE_KBFD
++  if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++    ospf6_bfd_peer_delete (on);
++#endif /*HAVE_KBFD*/
++
+   THREAD_OFF (on->inactivity_timer);
+ 
+   THREAD_OFF (on->thread_send_dbdesc);
+@@ -547,6 +554,27 @@
+   return 0;
+ }
+ 
++#ifdef HAVE_KBFD
++int
++ospf6_bfd_down (struct thread *thread)
++{
++  struct ospf6_neighbor *on;
++
++  on = (struct ospf6_neighbor *) THREAD_ARG (thread);
++  assert (on);
++
++  if (IS_OSPF6_DEBUG_NEIGHBOR (EVENT))
++    zlog_info ("Neighbor Event %s: *BFD Down*", on->name);
++
++  on->drouter = on->prev_drouter = 0;
++  on->bdrouter = on->prev_bdrouter = 0;
++
++  ospf6_neighbor_state_change (OSPF6_NEIGHBOR_DOWN, on);
++  thread_add_event (master, neighbor_change, on->ospf6_if, 0);
++
++  return 0;
++}
++#endif /*HAVE_KBFD*/
+ 
+ 
+ /* vty functions */
+@@ -665,6 +693,11 @@
+            on->ospf6_if->interface->name,
+            on->ospf6_if->interface->ifindex,
+            VNL);
++#ifdef HAVE_KBFD
++  if (CHECK_FLAG (on->bfd_flag, OSPF6_NBR_BFD_ENABLE))
++    vty_out (vty, "    BFD Enabled%s", VNL);
++#endif /*HAVE_KBFD*/
++
+   vty_out (vty, "    His IfIndex: %d Link-local address: %s%s",
+            on->ifindex, linklocal_addr,
+            VNL);
+Index: ospf6d/ospf6_neighbor.h
+===================================================================
+RCS file: /var/cvsroot/quagga/ospf6d/ospf6_neighbor.h,v
+retrieving revision 1.3
+diff -u -w -b -r1.3 ospf6_neighbor.h
+--- ospf6d/ospf6_neighbor.h	10 Oct 2004 12:54:58 -0000	1.3
++++ ospf6d/ospf6_neighbor.h	29 Jan 2008 06:46:36 -0000
+@@ -93,6 +93,13 @@
+   struct thread *thread_send_lsreq;
+   struct thread *thread_send_lsupdate;
+   struct thread *thread_send_lsack;
++
++#ifdef HAVE_KBFD
++  /* State for BFD */
++#define OSPF6_NBR_BFD_ENABLE   0x01
++#define OSPF6_NBR_BFD_DOWN     0x02
++  u_char bfd_flag;
++#endif /*HAVE_KBFD*/
+ };
+ 
+ /* Neighbor state */
+@@ -129,6 +136,9 @@
+ int bad_lsreq (struct thread *);
+ int oneway_received (struct thread *);
+ int inactivity_timer (struct thread *);
++#ifdef HAVE_KBFD
++int ospf6_bfd_down (struct thread *);
++#endif /*HAVE_KBFD*/
+ 
+ void ospf6_neighbor_init ();
+ int config_write_ospf6_debug_neighbor (struct vty *vty);
+Index: ospf6d/ospf6_zebra.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospf6d/ospf6_zebra.c,v
+retrieving revision 1.14
+diff -u -w -b -r1.14 ospf6_zebra.c
+--- ospf6d/ospf6_zebra.c	1 Oct 2005 17:38:07 -0000	1.14
++++ ospf6d/ospf6_zebra.c	29 Jan 2008 06:46:36 -0000
+@@ -28,6 +28,7 @@
+ #include "stream.h"
+ #include "zclient.h"
+ #include "memory.h"
++#include "thread.h"
+ 
+ #include "ospf6_proto.h"
+ #include "ospf6_top.h"
+@@ -36,6 +37,8 @@
+ #include "ospf6_lsa.h"
+ #include "ospf6_lsdb.h"
+ #include "ospf6_asbr.h"
++#include "ospf6_message.h"
++#include "ospf6_neighbor.h"
+ #include "ospf6_zebra.h"
+ #include "ospf6d.h"
+ 
+@@ -552,6 +555,111 @@
+   return CMD_SUCCESS;
+ }
+ 
++#ifdef HAVE_KBFD
++int
++ospf6_bfd_peer_add (struct ospf6_neighbor *on)
++{
++  union sockunion su;
++  memset (&su, 0, sizeof (su));
++  su.sin6.sin6_family = AF_INET6;
++  memcpy (&su.sin6.sin6_addr, &on->linklocal_addr,
++          sizeof (on->linklocal_addr));
++
++  zapi_bfd_peer_add (zclient, &su, 
++                     on->ospf6_if->interface->ifindex, 1);
++  return 0;
++}
++
++int
++ospf6_bfd_peer_delete (struct ospf6_neighbor *on)
++{
++  union sockunion su;
++  memset (&su, 0, sizeof (su));
++  su.sin6.sin6_family = AF_INET6;
++  memcpy (&su.sin6.sin6_addr, &on->linklocal_addr,
++          sizeof (on->linklocal_addr));
++
++  zapi_bfd_peer_delete (zclient, &su, 
++                        on->ospf6_if->interface->ifindex, 1);
++  return 0;
++}
++
++int
++ospf6_bfd_peer_up (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf6_interface *oi;
++  struct ospf6_neighbor *on;
++  struct listnode *i;
++  char buf[BUFSIZ];
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  oi = ospf6_interface_lookup_by_ifindex (ifindex);
++  if (!oi)
++    return 0;
++
++  for (i = listhead (oi->neighbor_list); i; listnextnode (i))
++    {
++      on = (struct ospf6_neighbor *) listgetdata (i);
++      if (IPV6_ADDR_SAME (&on->linklocal_addr, &su.sin6.sin6_addr))
++        {
++          UNSET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_DOWN);
++          zlog_info ("%s Detect BFD Up", 
++                     inet_ntop (AF_INET6, &su.sin6.sin6_addr, buf, BUFSIZ));
++          return 0;
++        }
++    }
++
++  return 0;
++}
++
++int
++ospf6_bfd_peer_down (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf6_interface *oi;
++  struct ospf6_neighbor *on;
++  struct listnode *i;
++  char buf[BUFSIZ];
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  oi = ospf6_interface_lookup_by_ifindex (ifindex);
++  if (!oi)
++    return 0;
++
++  for (i = listhead (oi->neighbor_list); i; listnextnode (i))
++    {
++      on = (struct ospf6_neighbor *) listgetdata (i);
++      if (IPV6_ADDR_SAME (&on->linklocal_addr, &su.sin6.sin6_addr))
++        {
++          SET_FLAG (on->bfd_flag, OSPF6_NBR_BFD_DOWN);
++          thread_add_event (master, ospf6_bfd_down, on, 0);
++          zlog_info ("%s Detect BFD Down", 
++                     inet_ntop (AF_INET6, &su.sin6.sin6_addr, buf, BUFSIZ));
++          return 0;
++        }
++    }
++
++  return 0;
++}
++#endif /*HAVE_KBFD*/
++
+ void
+ ospf6_zebra_init ()
+ {
+@@ -569,6 +677,10 @@
+   zclient->ipv4_route_delete = NULL;
+   zclient->ipv6_route_add = ospf6_zebra_read_ipv6;
+   zclient->ipv6_route_delete = ospf6_zebra_read_ipv6;
++#ifdef HAVE_KBFD
++  zclient->bfd_peer_up = ospf6_bfd_peer_up;
++  zclient->bfd_peer_down = ospf6_bfd_peer_down;
++#endif /*HAVE_KBFD*/
+ 
+   /* redistribute connected route by default */
+   /* ospf6_zebra_redistribute (ZEBRA_ROUTE_CONNECT); */
+Index: ospf6d/ospf6_zebra.h
+===================================================================
+RCS file: /var/cvsroot/quagga/ospf6d/ospf6_zebra.h,v
+retrieving revision 1.2
+diff -u -w -b -r1.2 ospf6_zebra.h
+--- ospf6d/ospf6_zebra.h	18 May 2004 18:57:06 -0000	1.2
++++ ospf6d/ospf6_zebra.h	29 Jan 2008 06:46:36 -0000
+@@ -49,5 +49,11 @@
+ int config_write_ospf6_debug_zebra (struct vty *vty);
+ void install_element_ospf6_debug_zebra ();
+ 
++#ifdef HAVE_KBFD
++struct ospf6_neighbor;
++int ospf6_bfd_peer_add (struct ospf6_neighbor *);
++int ospf6_bfd_peer_delete (struct ospf6_neighbor *);
++#endif /*HAVE_KBFD*/
++
+ #endif /*OSPF6_ZEBRA_H*/
+ 
+Index: ospfd/ospf_interface.h
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_interface.h,v
+retrieving revision 1.16
+diff -u -w -b -r1.16 ospf_interface.h
+--- ospfd/ospf_interface.h	22 Oct 2006 20:07:53 -0000	1.16
++++ ospfd/ospf_interface.h	29 Jan 2008 06:46:36 -0000
+@@ -73,6 +73,10 @@
+   
+   DECLARE_IF_PARAM (struct list *, auth_crypt);    /* List of Auth cryptographic data. */
+   DECLARE_IF_PARAM (int, auth_type);               /* OSPF authentication type */
++#ifdef HAVE_KBFD
++#define OSPF_INTERFACE_BFD_ENABLE 1
++  DECLARE_IF_PARAM (u_char, bfd_flag);               /* BFD use flag on OSPF */
++#endif /*HAVE_KBFD*/
+ };
+ 
+ enum
+Index: ospfd/ospf_neighbor.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_neighbor.c,v
+retrieving revision 1.10
+diff -u -w -b -r1.10 ospf_neighbor.c
+--- ospfd/ospf_neighbor.c	3 Apr 2006 21:25:32 -0000	1.10
++++ ospfd/ospf_neighbor.c	29 Jan 2008 06:46:36 -0000
+@@ -456,6 +456,22 @@
+   else
+     {
+       rn->info = nbr = ospf_nbr_add (oi, ospfh, p);
++#ifdef HAVE_KBFD
++      /* Register BFD Detection */
++      if (OSPF_IF_PARAM (oi, bfd_flag) == OSPF_INTERFACE_BFD_ENABLE)
++        {
++          SET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE);
++          ospf_bfd_peer_add (nbr);
++        }
++
++      if (OSPF_IF_PARAM (oi, bfd_flag) == OSPF_INTERFACE_BFD_ENABLE &&
++          CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN))
++        {
++          if (IS_DEBUG_OSPF_EVENT)
++            zlog_info ("BFD State is DOWN. discard");
++          return;
++        }
++#endif /*HAVE_KBFD*/
+     }
+   
+   nbr->router_id = ospfh->router_id;
+Index: ospfd/ospf_neighbor.h
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_neighbor.h,v
+retrieving revision 1.5
+diff -u -w -b -r1.5 ospf_neighbor.h
+--- ospfd/ospf_neighbor.h	25 Jul 2006 20:44:12 -0000	1.5
++++ ospfd/ospf_neighbor.h	29 Jan 2008 06:46:37 -0000
+@@ -88,6 +88,11 @@
+   struct timeval ts_last_regress;   /* last regressive NSM change     */
+   const char *last_regress_str;     /* Event which last regressed NSM */
+   u_int32_t state_change;           /* NSM state change counter       */
++#ifdef HAVE_KBFD
++#define OSPF_NBR_BFD_ENABLE   (1<<0)
++#define OSPF_NBR_BFD_DOWN     (1<<1)
++  u_char bfd_flag;
++#endif /*HAVE_KBFD*/
+ };
+ 
+ /* Macros. */
+Index: ospfd/ospf_nsm.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_nsm.c,v
+retrieving revision 1.29
+diff -u -w -b -r1.29 ospf_nsm.c
+--- ospfd/ospf_nsm.c	27 Aug 2006 06:49:29 -0000	1.29
++++ ospfd/ospf_nsm.c	29 Jan 2008 06:46:37 -0000
+@@ -396,6 +396,11 @@
+ 		   IF_NAME (nbr->oi), inet_ntoa (nbr->address.u.prefix4));  
+     }
+ 
++  /* Delete neighbor from interface. */
++#ifdef HAVE_KBFD
++  ospf_bfd_peer_delete (nbr);
++#endif /*HAVE_KBFD*/
++  ospf_nbr_delete (nbr);
+   return 0;
+ }
+ 
+Index: ospfd/ospf_packet.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_packet.c,v
+retrieving revision 1.97
+diff -u -w -b -r1.97 ospf_packet.c
+--- ospfd/ospf_packet.c	21 Aug 2007 16:32:56 -0000	1.97
++++ ospfd/ospf_packet.c	29 Jan 2008 06:46:37 -0000
+@@ -898,6 +898,11 @@
+ 
+   old_state = nbr->state;
+ 
++#ifdef HAVE_KBFD
++  if (CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN))
++    return;
++#endif /*HAVE_KBFD*/
++
+   /* Add event to thread. */
+   OSPF_NSM_EVENT_EXECUTE (nbr, NSM_HelloReceived);
+ 
+Index: ospfd/ospf_vty.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_vty.c,v
+retrieving revision 1.65
+diff -u -w -b -r1.65 ospf_vty.c
+--- ospfd/ospf_vty.c	10 May 2007 03:00:09 -0000	1.65
++++ ospfd/ospf_vty.c	29 Jan 2008 06:46:38 -0000
+@@ -2896,6 +2896,12 @@
+ 	       OSPF_IF_PARAM (oi,transmit_delay), LOOKUP (ospf_ism_state_msg, oi->state),
+ 	       PRIORITY (oi), VTY_NEWLINE);
+ 
++#ifdef HAVE_KBFD
++      vty_out (vty, "%s",
++	       (IF_DEF_PARAMS (ifp)->bfd_flag == OSPF_INTERFACE_BFD_ENABLE ?
++	        ", BFD enabled" : ""));
++#endif /*HAVE_KBFD*/
++
+   /* Show DR information. */
+       if (DR (oi).s_addr == 0)
+ 	vty_out (vty, "  No designated router on this network%s", VTY_NEWLINE);
+@@ -3224,6 +3230,10 @@
+   /* Show Area ID. */
+   vty_out (vty, "    In the area %s via interface %s%s",
+ 	   ospf_area_desc_string (oi->area), oi->ifp->name, VTY_NEWLINE);
++#ifdef HAVE_KBFD
++  if (CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE))
++    vty_out (vty, "    BFD Enabled%s", VTY_NEWLINE);
++#endif /*HAVE_KBFD*/
+   /* Show neighbor priority and state. */
+   vty_out (vty, "    Neighbor priority is %d, State is %s,",
+ 	   nbr->priority, LOOKUP (ospf_nsm_state_msg, nbr->state));
+@@ -5707,6 +5717,89 @@
+        "OSPF interface commands\n"
+        "Link state transmit delay\n")
+ 
++#ifdef HAVE_KBFD
++DEFUN (ip_ospf_bfd_enable,
++       ip_ospf_bfd_enable_cmd,
++       "ip ospf bfd-enable",
++       IP_STR
++       OSPF_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct interface *ifp;
++  struct ospf_neighbor *nbr;
++  struct ospf_if_params *params;
++  struct route_node *rn, *rn2;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  params = IF_DEF_PARAMS (ifp);
++  params->bfd_flag = OSPF_INTERFACE_BFD_ENABLE;
++  SET_IF_PARAM (params, bfd_flag); 
++
++  for (rn = route_top (IF_OIFS (ifp)); rn; rn = route_next (rn))
++    {
++      struct ospf_interface *oi = rn->info;
++      for (rn2 = route_top (oi->nbrs); rn2; rn2 = route_next (rn2))
++          {
++          if ((nbr = rn2->info))
++              if (nbr != oi->nbr_self)
++                  {
++                      if (!CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE))
++                          {
++                              SET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE);
++                              ospf_bfd_peer_add (nbr);
++                          }
++                  }
++          }
++    }
++
++  return CMD_SUCCESS;
++}
++
++DEFUN (no_ip_ospf_bfd_enable,
++       no_ip_ospf_bfd_enable_cmd,
++       "no ip ospf bfd-enable",
++       NO_STR
++       IP_STR
++       OSPF_STR
++       "Enable BFD Fast Detection on this interface\n"
++       )
++{
++  struct interface *ifp;
++  struct ospf_neighbor *nbr;
++  struct ospf_if_params *params;
++  struct route_node *rn, *rn2;
++
++  ifp = (struct interface *) vty->index;
++  assert (ifp);
++
++  params = IF_DEF_PARAMS (ifp);
++  params->bfd_flag = 0;
++  UNSET_IF_PARAM (params, bfd_flag); 
++
++  for (rn = route_top (IF_OIFS (ifp)); rn; rn = route_next (rn))
++    {
++      struct ospf_interface *oi = rn->info;
++      for (rn2 = route_top (oi->nbrs); rn2; rn2 = route_next (rn2))
++          {
++          if ((nbr = rn2->info))
++              if (nbr != oi->nbr_self)
++                  {
++                      if (CHECK_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE))
++                          {
++                              UNSET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_ENABLE);
++                              ospf_bfd_peer_delete (nbr);
++                          }
++                  }
++          }
++    }
++
++  return CMD_SUCCESS;
++}
++#endif /*HAVE_KBFD*/
++
+ 
+ DEFUN (ospf_redistribute_source_metric_type,
+        ospf_redistribute_source_metric_type_routemap_cmd,
+@@ -7503,6 +7596,16 @@
+ 	    vty_out (vty, "%s", VTY_NEWLINE);
+ 	  }
+ 
++#ifdef HAVE_KBFD
++	/* bfd-enable print. */
++	if (OSPF_IF_PARAM_CONFIGURED (params, bfd_flag) &&
++	    params->bfd_flag != 0)
++	  {
++	    vty_out (vty, " ip ospf bfd-enable");
++	    vty_out (vty, "%s", VTY_NEWLINE);
++	  }
++#endif /*HAVE_KBFD*/
++
+     /* MTU ignore print. */
+     if (OSPF_IF_PARAM_CONFIGURED (params, mtu_ignore) &&
+        params->mtu_ignore != OSPF_MTU_IGNORE_DEFAULT)
+@@ -8141,6 +8244,12 @@
+   install_element (INTERFACE_NODE, &ip_ospf_transmit_delay_cmd);
+   install_element (INTERFACE_NODE, &no_ip_ospf_transmit_delay_addr_cmd);
+   install_element (INTERFACE_NODE, &no_ip_ospf_transmit_delay_cmd);
++
++#ifdef HAVE_KBFD
++  /* "ip ospf bfd-enable" commands. */
++  install_element (INTERFACE_NODE, &ip_ospf_bfd_enable_cmd);
++  install_element (INTERFACE_NODE, &no_ip_ospf_bfd_enable_cmd);
++#endif /*HAVE_KBFD*/
+ 
+   /* These commands are compatibitliy for previous version. */
+   install_element (INTERFACE_NODE, &ospf_authentication_key_cmd);
+Index: ospfd/ospf_zebra.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_zebra.c,v
+retrieving revision 1.43
+diff -u -w -b -r1.43 ospf_zebra.c
+--- ospfd/ospf_zebra.c	14 Mar 2007 20:21:43 -0000	1.43
++++ ospfd/ospf_zebra.c	29 Jan 2008 06:46:38 -0000
+@@ -48,6 +48,9 @@
+ #ifdef HAVE_SNMP
+ #include "ospfd/ospf_snmp.h"
+ #endif /* HAVE_SNMP */
++#include "ospfd/ospf_lsdb.h"
++#include "ospfd/ospf_neighbor.h"
++#include "ospfd/ospf_nsm.h"
+ 
+ /* Zebra structure to hold current status. */
+ struct zclient *zclient = NULL;
+@@ -1271,6 +1274,102 @@
+   return 0;
+ }
+ 
++
++#ifdef HAVE_KBFD
++int
++ospf_bfd_peer_add (struct ospf_neighbor *nbr)
++{
++  union sockunion su;
++  su.sin.sin_family = AF_INET;
++  su.sin.sin_addr = nbr->src;
++
++  zapi_bfd_peer_add (zclient, &su, nbr->oi->ifp->ifindex, 1);
++  return 0;
++}
++
++int
++ospf_bfd_peer_delete (struct ospf_neighbor *nbr)
++{
++  union sockunion su;
++  su.sin.sin_family = AF_INET;
++  su.sin.sin_addr = nbr->src;
++
++  zapi_bfd_peer_delete (zclient, &su, nbr->oi->ifp->ifindex, 1);
++  return 0;
++}
++
++int
++ospf_bfd_peer_up (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf *ospf;
++  struct ospf_interface *oi;
++  struct ospf_neighbor *nbr;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  ospf = ospf_lookup ();
++  if (!ospf)
++	  return 0;
++
++  oi = ospf_if_lookup_recv_if (ospf, su.sin.sin_addr);
++  if (!oi)
++	  return 0;
++
++  nbr = ospf_nbr_lookup_by_addr (oi->nbrs, &su.sin.sin_addr);
++  if (nbr){
++	  UNSET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN);
++  }
++
++  zlog_info ("%s Detect BFD Up", inet_ntoa (su.sin.sin_addr));
++  return 0;
++}
++
++int
++ospf_bfd_peer_down (int command, struct zclient *zclient, zebra_size_t length)
++{
++  struct stream *s;
++  union sockunion su;
++  int ifindex;
++  struct ospf *ospf;
++  struct ospf_interface *oi;
++  struct ospf_neighbor *nbr;
++
++  s = zclient->ibuf;
++
++  /* peer address */
++  stream_get (&su, s, sizeof (union sockunion));
++  /* ifindex */
++  ifindex = stream_getl (s);
++
++  ospf = ospf_lookup ();
++  if (!ospf)
++	  return 0;
++
++  oi = ospf_if_lookup_recv_if (ospf, su.sin.sin_addr);
++  if (!oi)
++	  return 0;
++
++  nbr = ospf_nbr_lookup_by_addr (oi->nbrs, &su.sin.sin_addr);
++  if (nbr){
++	  SET_FLAG (nbr->bfd_flag, OSPF_NBR_BFD_DOWN);
++	  OSPF_NSM_EVENT_EXECUTE (nbr, NSM_KillNbr);
++  }
++
++  zlog_info ("%s Detect BFD Down", inet_ntoa (su.sin.sin_addr));
++
++  return 0;
++}
++#endif /*HAVE_KBFD*/
++
++
+ void
+ ospf_zebra_init ()
+ {
+@@ -1286,6 +1385,10 @@
+   zclient->interface_address_delete = ospf_interface_address_delete;
+   zclient->ipv4_route_add = ospf_zebra_read_ipv4;
+   zclient->ipv4_route_delete = ospf_zebra_read_ipv4;
++#ifdef HAVE_KBFD
++  zclient->bfd_peer_up = ospf_bfd_peer_up;
++  zclient->bfd_peer_down = ospf_bfd_peer_down;
++#endif /*HAVE_KBFD*/
+ 
+   access_list_add_hook (ospf_filter_update);
+   access_list_delete_hook (ospf_filter_update);
+Index: ospfd/ospf_zebra.h
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospf_zebra.h,v
+retrieving revision 1.4
+diff -u -w -b -r1.4 ospf_zebra.h
+--- ospfd/ospf_zebra.h	14 Nov 2005 11:11:11 -0000	1.4
++++ ospfd/ospf_zebra.h	29 Jan 2008 06:46:38 -0000
+@@ -74,6 +74,10 @@
+ 			      const char *, const char *);
+ extern int ospf_distance_unset (struct vty *, struct ospf *, const char *,
+ 				const char *, const char *);
++#ifdef HAVE_KBFD
++int ospf_bfd_peer_add (struct ospf_neighbor *);
++int ospf_bfd_peer_delete (struct ospf_neighbor *);
++#endif /*HAVE_KBFD*/
+ extern void ospf_zebra_init (void);
+ 
+ #endif /* _ZEBRA_OSPF_ZEBRA_H */
+Index: ospfd/ospfd.c
+===================================================================
+RCS file: /var/cvsroot/quagga/ospfd/ospfd.c,v
+retrieving revision 1.52
+diff -u -w -b -r1.52 ospfd.c
+--- ospfd/ospfd.c	18 Sep 2007 09:01:13 -0000	1.52
++++ ospfd/ospfd.c	29 Jan 2008 06:46:38 -0000
+@@ -33,6 +33,7 @@
+ #include "sockunion.h"          /* for inet_aton () */
+ #include "zclient.h"
+ #include "plist.h"
++#include "sockunion.h"
+ #include "sockopt.h"
+ 
+ #include "ospfd/ospfd.h"
+@@ -1479,6 +1480,9 @@
+ 
+       nbr_nbma->nbr = nbr;
+ 
++#ifdef HAVE_KBFD
++      ospf_bfd_peer_add (nbr);
++#endif /*HAVE_KBFD*/
+       OSPF_NSM_EVENT_EXECUTE (nbr, NSM_Start);
+     }
+ }
+Index: zebra/Makefile.am
+===================================================================
+RCS file: /var/cvsroot/quagga/zebra/Makefile.am,v
+retrieving revision 1.14
+diff -u -w -b -r1.14 Makefile.am
+--- zebra/Makefile.am	2 May 2007 16:05:35 -0000	1.14
++++ zebra/Makefile.am	29 Jan 2008 06:46:38 -0000
+@@ -26,7 +26,7 @@
+ zebra_SOURCES = \
+ 	zserv.c main.c interface.c connected.c zebra_rib.c zebra_routemap.c \
+ 	redistribute.c debug.c rtadv.c zebra_snmp.c zebra_vty.c \
+-	irdp_main.c irdp_interface.c irdp_packet.c router-id.c
++	irdp_main.c irdp_interface.c irdp_packet.c router-id.c bfd.c
+ 
+ testzebra_SOURCES = test_main.c zebra_rib.c interface.c connected.c debug.c \
+ 	zebra_vty.c \
+@@ -34,7 +34,7 @@
+ 
+ noinst_HEADERS = \
+ 	connected.h ioctl.h rib.h rt.h zserv.h redistribute.h debug.h rtadv.h \
+-	interface.h ipforward.h irdp.h router-id.h kernel_socket.h
++	interface.h ipforward.h irdp.h router-id.h kernel_socket.h netlink.h bfd.h
+ 
+ zebra_LDADD = $(otherobj) $(LIBCAP) $(LIB_IPV6) ../lib/libzebra.la
+ 
+Index: zebra/bfd.c
+===================================================================
+RCS file: zebra/bfd.c
+diff -N zebra/bfd.c
+--- /dev/null	1 Jan 1970 00:00:00 -0000
++++ zebra/bfd.c	29 Jan 2008 06:46:38 -0000
+@@ -0,0 +1,509 @@
++/* BFD Function Interface with netlink interface.
++   Copyright (C) 2007  Hajime TAZAKI.
++
++This file is part of GNU Zebra.
++
++GNU Zebra is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GNU Zebra is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GNU Zebra; see the file COPYING.  If not, write to
++the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++Boston, MA 02110-1301, USA.  */
++
++#include <zebra.h>
++
++#ifdef HAVE_KBFD
++
++/* FIXME */
++#include <kbfd_netlink.h>
++
++#include "log.h"
++#include "thread.h"
++#include "sockunion.h"
++#include "prefix.h"
++#include "zclient.h"
++#include "linklist.h"
++#include "command.h"
++#include "memory.h"
++
++#include "zebra/netlink.h"
++#include "zebra/bfd.h"
++#include "zebra/rib.h"
++#include "zebra/zserv.h"
++#include "zebra/debug.h"
++
++struct nlsock bfd_nlsock = { -1, 0, {0}, "bfd-netlink", NULL };
++static struct list *bfd_peer_list;
++
++extern struct thread_master *master;
++extern struct zebra_t zebrad;
++
++const char *bfd_nl_msg_str[] = {
++  "BFD_NEWPEER",
++  "BFD_DELPEER",
++  "BFD_GETPEER",
++  "BFD_ADMINDOWN",
++  "BFD_GETPEERSTAT",
++};
++
++const char *bfd_state_string[] = {
++  "AdminDown",
++  "Down",
++  "Init",
++  "Up",
++};
++
++static int
++bfd_netlink_state_change (struct sockaddr_nl *snl, struct nlmsghdr *h)
++{
++  int len;
++  struct bfd_nl_peerinfo *peerinfo;
++  struct bfd_peer peer;
++  struct zserv *client;
++  struct listnode *node;
++
++  if (h->nlmsg_type != BFD_NEWPEER)
++    {
++      zlog_warn ("invalid nlmsg_type");
++      return 0;
++    }
++
++  len = h->nlmsg_len - NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++  if (len < 0)
++    return -1;
++
++  peerinfo = NLMSG_DATA (h);
++  if (IS_ZEBRA_DEBUG_KERNEL)
++    zlog_info ("rcvd peerinfo %s: state=%d, ifindex=%d",
++               sockunion_log ((union sockunion *) &peerinfo->dst),
++               peerinfo->state, peerinfo->ifindex);
++
++  memcpy (&peer.su, &peerinfo->dst.sa, sizeof (union sockunion));
++  peer.ifindex = peerinfo->ifindex;
++
++  if (peerinfo->state == BSM_Up)
++    {
++      for (node = listhead (zebrad.client_list); node; node = listnextnode (node))
++        if ((client = listgetdata (node)) != NULL)
++          zsend_bfd_peer_up (client, &peer);
++    }
++  else if (peerinfo->state == BSM_Down)
++    {
++      for (node = listhead (zebrad.client_list); node; node = listnextnode (node))
++        if ((client = listgetdata (node)) != NULL)
++          zsend_bfd_peer_down (client, &peer);
++    }
++  else
++    {
++    }
++
++  return 0;
++}
++
++static int
++kernel_bfd_read (struct thread *th)
++{
++  int ret;
++  int sock;
++
++  sock = THREAD_FD (th);
++  ret = netlink_parse_info (bfd_netlink_state_change, &bfd_nlsock);
++  thread_add_read (zebrad.master, kernel_bfd_read, NULL, bfd_nlsock.sock);
++  return 0;
++}
++
++/* User=>Kernel Netlink message */
++static int
++bfd_netlink_peer (int cmd, struct bfd_peer *peer)
++{
++  int ret;
++  size_t size;
++  struct
++  {
++    struct nlmsghdr nlh;
++    struct bfd_nl_peerinfo info;
++  } req;
++
++  memset (&req, 0, sizeof req);
++  req.nlh.nlmsg_len = NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++  req.nlh.nlmsg_flags = NLM_F_CREATE | NLM_F_REQUEST | NLM_F_ACK;
++  req.nlh.nlmsg_type = cmd;
++
++  if (peer->su.sa.sa_family == AF_INET)
++    size = sizeof (struct sockaddr_in);
++  else if (peer->su.sa.sa_family == AF_INET6)
++    size = sizeof (struct sockaddr_in6);
++  else
++    {
++      zlog_warn ("peer sockaddr is invalid");
++      return -1;
++    }
++
++  memcpy (&req.info.dst.sa, &peer->su, size);
++  req.info.ifindex = peer->ifindex;
++
++  ret = netlink_talk (&req.nlh, &bfd_nlsock);
++  if (ret < 0)
++    {
++      perror ("sendmsg");
++      return -1;
++    }
++
++  if (IS_ZEBRA_DEBUG_KERNEL)
++    zlog_info ("bfd peer %s (%s)", bfd_nl_msg_str[cmd - 1],
++               sockunion_log (&peer->su));
++  return 0;
++}
++
++static struct bfd_peer *
++bfd_peer_lookup (union sockunion *su, int ifindex, u_char peer_type)
++{
++  struct bfd_peer *peer;
++  struct listnode *node;
++
++  for (node = listhead (bfd_peer_list); node; node = listnextnode (node))
++    {
++      peer = listgetdata (node);
++      if (sockunion_same (&peer->su, su) &&
++          peer->ifindex == ifindex && peer->type == peer_type)
++        return peer;
++    }
++
++  return NULL;
++}
++
++int
++kernel_bfd_add_peer (struct bfd_peer *peer, char appid)
++{
++  struct bfd_peer *tmp_peer;
++  char *tmp_appid = NULL;
++  struct listnode *node;
++
++  /* lookup same peer */
++  tmp_peer = bfd_peer_lookup (&peer->su, peer->ifindex, peer->type);
++  if (!tmp_peer)
++    {
++      tmp_peer = XCALLOC (MTYPE_BFD_PEER, sizeof (struct bfd_peer));
++      memcpy (&tmp_peer->su, &peer->su, sizeof (union sockunion));
++      tmp_peer->ifindex = peer->ifindex;
++      tmp_peer->type = peer->type;
++      tmp_peer->appid_lst = list_new ();
++      tmp_appid = malloc (sizeof (char));
++      *tmp_appid = appid;
++      listnode_add (tmp_peer->appid_lst, tmp_appid);
++      listnode_add (bfd_peer_list, tmp_peer);
++    }
++  else
++    {
++      for (node = listhead (tmp_peer->appid_lst); node; node = listnextnode (node))
++        {
++          tmp_appid = listgetdata (node);
++          if (*tmp_appid == appid)
++            break;
++          tmp_appid = NULL;
++        }
++
++      if (tmp_appid)
++        {
++          zlog_warn ("duplicate registration.");
++          return 0;
++        }
++      tmp_appid = malloc (sizeof (char));
++      *tmp_appid = appid;
++      listnode_add (tmp_peer->appid_lst, tmp_appid);
++    }
++
++  bfd_netlink_peer (BFD_NEWPEER, peer);
++  return 0;
++}
++
++int
++kernel_bfd_delete_peer (struct bfd_peer *peer, char appid)
++{
++  struct bfd_peer *tmp_peer;
++  struct listnode *node;
++  char *tmp_appid;
++
++  tmp_peer = bfd_peer_lookup (&peer->su, peer->ifindex, peer->type);
++  if (!tmp_peer)
++    return 0;
++
++  for (node = listhead (tmp_peer->appid_lst); node; node = listnextnode (node))
++    {
++      tmp_appid = listgetdata (node);
++      if (*tmp_appid == appid)
++        break;
++      tmp_appid = NULL;
++    }
++
++  if (!tmp_appid)
++    return 0;
++
++  listnode_delete (tmp_peer->appid_lst, (void *) tmp_appid);
++  if (listcount (tmp_peer->appid_lst) == 0)
++    {
++      list_delete (tmp_peer->appid_lst);
++      listnode_delete (bfd_peer_list, tmp_peer);
++      bfd_netlink_peer (BFD_DELPEER, tmp_peer);
++      XFREE (MTYPE_BFD_PEER, tmp_peer);
++    }
++
++  return 0;
++}
++
++/* Request Message */
++static int
++bfd_netlink_request (int type, struct nlsock *nl)
++{
++  int ret;
++  struct sockaddr_nl snl;
++
++  struct
++  {
++    struct nlmsghdr nlh;
++    struct bfd_nl_peerinfo peer;
++  } req;
++
++
++  /* Check netlink socket. */
++  if (nl->sock < 0)
++    {
++      zlog_err ("%s socket isn't active.", nl->name);
++      return -1;
++    }
++
++  memset (&snl, 0, sizeof snl);
++  snl.nl_family = AF_NETLINK;
++
++  memset (&req, 0, sizeof req);
++  req.nlh.nlmsg_len = sizeof req;
++  req.nlh.nlmsg_type = type;
++  req.nlh.nlmsg_flags = NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST;
++  req.nlh.nlmsg_pid = 0;
++  req.nlh.nlmsg_seq = ++nl->seq;
++  //  memcpy (&req.peer.su.sa, &su, sizeof (req.peer.su));
++
++  ret = sendto (nl->sock, (void *) &req, sizeof req, 0,
++                (struct sockaddr *) &snl, sizeof snl);
++  if (ret < 0)
++    {
++      zlog_err ("%s sendto failed: %s", nl->name, strerror (errno));
++      return -1;
++    }
++
++  return 0;
++}
++
++static int
++bfd_netlink_peer_info (struct sockaddr_nl *snl, struct nlmsghdr *h)
++{
++  int len;
++  struct bfd_nl_peerinfo *peer;
++  char buf1[BUFSIZ], buf2[BUFSIZ];
++  struct vty *vty = bfd_nlsock.vty;
++
++  if (h->nlmsg_type != BFD_NEWPEER)
++    {
++      zlog_warn ("invalid nlmsg_type");
++      return 0;
++    }
++
++  len = h->nlmsg_len - NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++  if (len < 0)
++    return -1;
++
++  peer = NLMSG_DATA (h);
++
++  vty_out (vty, "%-39s",
++           inet_ntop (peer->dst.sa.sa_family,
++                      peer->dst.sa.sa_family == AF_INET ?
++                      (char *) &peer->dst.sin.sin_addr
++                      : (char *) &peer->dst.sin6.sin6_addr, buf1, BUFSIZ));
++  vty_out (vty, "%u %u  %-5s %s%s",
++           ntohl (peer->my_disc),
++           ntohl (peer->your_disc),
++           bfd_state_string[peer->state],
++           ifindex2ifname (peer->ifindex), VTY_NEWLINE);
++
++  vty_out (vty, "  SrcIP: %s%s",
++           inet_ntop (peer->src.sa.sa_family,
++                      peer->src.sa.sa_family == AF_INET ?
++                      (char *) &peer->src.sin.sin_addr
++                      : (char *) &peer->src.sin6.sin6_addr, buf2, BUFSIZ),
++           VTY_NEWLINE);
++
++  vty_out (vty, "  Packet Rcvd: %llu%s", peer->pkt_in, VTY_NEWLINE);
++  vty_out (vty, "  Packet Send: %llu%s", peer->pkt_out, VTY_NEWLINE);
++  vty_out (vty, "  Last UpTime(sysUptime): %u%s", peer->last_up, VTY_NEWLINE);
++  vty_out (vty, "  Last DownTime(sysUptime): %u%s",
++           peer->last_down, VTY_NEWLINE);
++  vty_out (vty, "  Up Count: %u%s", peer->up_cnt, VTY_NEWLINE);
++
++  return 0;
++}
++
++
++static int
++bfd_netlink_peer_list (struct vty *vty)
++{
++  int ret;
++
++  ret = bfd_netlink_request (BFD_GETPEER, &bfd_nlsock);
++  if (ret < 0)
++    return ret;
++  bfd_nlsock.vty = vty;
++  ret = netlink_parse_info (bfd_netlink_peer_info, &bfd_nlsock);
++  if (ret < 0)
++    return ret;
++
++  return 0;
++}
++
++#define  SHOW_BFD_HEADER   "DstIP                                 LD/RD  State Interface %s"
++DEFUN (show_bfd_neighbors,
++       show_bfd_neighbors_cmd,
++       "show bfd neighbors",
++       SHOW_STR "Bi-Directional Forarding Detection\n" "Neighbor \n")
++{
++
++  vty_out (vty, SHOW_BFD_HEADER, VTY_NEWLINE);
++
++  bfd_netlink_peer_list (vty);
++  return CMD_SUCCESS;
++}
++
++
++DEFUN (bfd_parameter_if,
++       bfd_parameter_if_cmd,
++       "bfd interval <10-10000000> min_rx <10-10000000> multiplier <1-100>",
++       "Bi-Directional Forarding Detection\n"
++       "Set Desired Min TX Interval on this interface\n"
++       "Desired Min TX Interval\n"
++       "Set Required Min RX Interval on this interface\n"
++       "Required Min RX Interval\n"
++       "Set Detect Time Multiplier on this interface\n"
++       "Detect Time Multiplier\n")
++{
++  struct interface *ifp;
++  int ret;
++  struct
++  {
++    struct nlmsghdr nlh;
++    struct bfd_nl_linkinfo info;
++  } req;
++
++  ifp = (struct interface *) vty->index;
++
++  memset (&req, 0, sizeof req);
++  req.nlh.nlmsg_len = NLMSG_LENGTH (sizeof (struct bfd_nl_peerinfo));
++  req.nlh.nlmsg_flags = NLM_F_CREATE | NLM_F_REQUEST | NLM_F_ACK;
++  req.nlh.nlmsg_type = BFD_SETLINK;
++
++  req.info.ifindex = ifp->ifindex;
++  req.info.mintx = strtol (argv[0], NULL, 10);
++  req.info.minrx = strtol (argv[1], NULL, 10);
++  req.info.mult = strtol (argv[2], NULL, 10);
++
++  ret = netlink_talk (&req.nlh, &bfd_nlsock);
++  if (ret < 0)
++    {
++      vty_out (vty, "bfd_netlink: BFD_SETLINK(sendmsg) err");
++      return CMD_WARNING;
++    }
++
++  if (IS_ZEBRA_DEBUG_KERNEL)
++    zlog_info ("bfd_netlink: BFD_SETLINK done");
++
++  return CMD_SUCCESS;
++}
++
++
++int
++bfd_netlink_init ()
++{
++  int ret;
++  struct sockaddr_nl snl;
++  int namelen;
++
++  bfd_peer_list = list_new ();
++
++  /* socket initialization */
++  bfd_nlsock.sock = socket (AF_NETLINK, SOCK_RAW, NETLINK_BFD);
++  if (bfd_nlsock.sock < 0)
++    {
++      zlog_err ("Can't open %s socket: %s", bfd_nlsock.name,
++                strerror (errno));
++      return -1;
++    }
++
++  ret = fcntl (bfd_nlsock.sock, F_SETFL, O_NONBLOCK);
++  if (ret < 0)
++    {
++      zlog_err ("Can't set %s socket flags: %s", bfd_nlsock.name,
++                strerror (errno));
++      close (bfd_nlsock.sock);
++      return -1;
++    }
++
++  memset (&snl, 0, sizeof snl);
++  snl.nl_family = AF_NETLINK;
++  snl.nl_groups = 1;
++
++  /* Bind the socket to the netlink structure for anything. */
++  ret = bind (bfd_nlsock.sock, (struct sockaddr *) &snl, sizeof snl);
++  if (ret < 0)
++    {
++      zlog_err ("Can't bind %s socket to group 0x%x: %s",
++                bfd_nlsock.name, snl.nl_groups, strerror (errno));
++      close (bfd_nlsock.sock);
++      return -1;
++    }
++
++  /* multiple netlink sockets will have different nl_pid */
++  namelen = sizeof snl;
++  ret =
++    getsockname (bfd_nlsock.sock, (struct sockaddr *) &snl,
++                 (socklen_t *) & namelen);
++  if (ret < 0 || namelen != sizeof snl)
++    {
++      zlog_err ("Can't get %s socket name: %s", bfd_nlsock.name,
++                strerror (errno));
++      close (bfd_nlsock.sock);
++      return -1;
++    }
++
++  /* Now schedule incoming kernel message */
++  thread_add_read (zebrad.master, kernel_bfd_read, NULL, bfd_nlsock.sock);
++
++  install_element (VIEW_NODE, &show_bfd_neighbors_cmd);
++  install_element (ENABLE_NODE, &show_bfd_neighbors_cmd);
++  install_element (INTERFACE_NODE, &bfd_parameter_if_cmd);
++
++  return ret;
++}
++
++int
++bfd_netlink_finish ()
++{
++  struct bfd_peer *peer;
++  struct listnode *node;
++
++  /* cleanup kernel peer list */
++  for (node = listhead (bfd_peer_list); node; node = listnextnode (node))
++    {
++      peer = listgetdata (node);
++      bfd_netlink_peer (BFD_DELPEER, peer);
++    }
++
++  return 0;
++}
++
++#endif /*HAVE_KBFD */
+Index: zebra/bfd.h
+===================================================================
+RCS file: zebra/bfd.h
+diff -N zebra/bfd.h
+--- /dev/null	1 Jan 1970 00:00:00 -0000
++++ zebra/bfd.h	29 Jan 2008 06:46:38 -0000
+@@ -0,0 +1,47 @@
++/* BFD Function Interface with netlink interface.
++   Copyright (C) 2007  Hajime TAZAKI.
++
++This file is part of GNU Zebra.
++
++GNU Zebra is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GNU Zebra is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GNU Zebra; see the file COPYING.  If not, write to
++the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++Boston, MA 02110-1301, USA.  */
++
++#ifndef __BFD_NETLINK_H_
++#define __BFD_NETLINK_H_
++
++#ifdef HAVE_KBFD
++
++#include "sockunion.h"
++
++struct bfd_peer
++{
++	union sockunion su;
++	int ifindex;
++	struct list *appid_lst;
++#define   BFD_PEER_SINGLE_HOP        0x01
++#define   BFD_PEER_MULTI_HOP         0x02
++	u_char type;
++	u_char pad1;
++	u_short pad2;
++};
++
++int kernel_bfd_add_peer(struct bfd_peer *, char);
++int kernel_bfd_delete_peer(struct bfd_peer *, char);
++int bfd_netlink_init();
++int bfd_netlink_finish();
++
++#endif /*HAVE_KBFD*/
++
++#endif /* __BFD_NETLINK_H_ */
+Index: zebra/main.c
+===================================================================
+RCS file: /var/cvsroot/quagga/zebra/main.c,v
+retrieving revision 1.28
+diff -u -w -b -r1.28 main.c
+--- zebra/main.c	14 Sep 2007 14:56:28 -0000	1.28
++++ zebra/main.c	29 Jan 2008 06:46:38 -0000
+@@ -39,6 +39,7 @@
+ #include "zebra/router-id.h"
+ #include "zebra/irdp.h"
+ #include "zebra/rtadv.h"
++#include "zebra/netlink.h"
+ 
+ /* Zebra instance */
+ struct zebra_t zebrad =
+@@ -173,6 +174,10 @@
+   irdp_finish();
+ #endif
+ 
++#ifdef HAVE_KBFD
++  bfd_netlink_finish();
++#endif /*HAVE_KBFD*/
++
+   exit (0);
+ }
+ 
+@@ -337,6 +342,9 @@
+   kernel_init ();
+   interface_list ();
+   route_read ();
++#ifdef HAVE_KBFD
++  bfd_netlink_init();
++#endif /*HAVE_KBFD*/
+ 
+   /* Sort VTY commands. */
+   sort_node ();
+Index: zebra/netlink.h
+===================================================================
+RCS file: zebra/netlink.h
+diff -N zebra/netlink.h
+--- /dev/null	1 Jan 1970 00:00:00 -0000
++++ zebra/netlink.h	29 Jan 2008 06:46:38 -0000
+@@ -0,0 +1,38 @@
++/* Kernel netlink interface GNU/Linux system.
++   Copyright (C) 2007  Hajime TAZAKI.
++
++This file is part of GNU Zebra.
++
++GNU Zebra is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GNU Zebra is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GNU Zebra; see the file COPYING.  If not, write to
++the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++Boston, MA 02110-1301, USA.  */
++
++#ifndef _NETLINK_H_
++#define _NETLINK_H_
++
++/* Socket interface to kernel */
++struct nlsock
++{
++  int sock;
++  int seq;
++  struct sockaddr_nl snl;
++  char *name;
++  struct vty *vty;
++};
++
++int netlink_talk (struct nlmsghdr *, struct nlsock *);
++int netlink_parse_info (int (*filter) (struct sockaddr_nl *,
++                                       struct nlmsghdr *), struct nlsock *);
++
++#endif /*_NETLINK_H_*/
+Index: zebra/rt_netlink.c
+===================================================================
+RCS file: /var/cvsroot/quagga/zebra/rt_netlink.c,v
+retrieving revision 1.46
+diff -u -w -b -r1.46 rt_netlink.c
+--- zebra/rt_netlink.c	10 Aug 2007 06:25:20 -0000	1.46
++++ zebra/rt_netlink.c	29 Jan 2008 06:46:38 -0000
+@@ -41,16 +41,11 @@
+ #include "zebra/redistribute.h"
+ #include "zebra/interface.h"
+ #include "zebra/debug.h"
++#include "zebra/netlink.h"
+ 
+-/* Socket interface to kernel */
+-struct nlsock
+-{
+-  int sock;
+-  int seq;
+-  struct sockaddr_nl snl;
+-  const char *name;
+-} netlink      = { -1, 0, {0}, "netlink-listen"},     /* kernel messages */
+-  netlink_cmd  = { -1, 0, {0}, "netlink-cmd"};        /* command channel */
++struct nlsock netlink =	{ -1, 0, {0}, "netlink-listen" };	/* kernel messages */
++struct nlsock netlink_cmd = { -1, 0, {0}, "netlink-cmd" };      /* command channel */
++struct nlsock netlink_addr = {-1, 0, {0}, "netlink-addr" };		/* address channel */
+ 
+ struct message nlmsg_str[] = {
+   {RTM_NEWROUTE, "RTM_NEWROUTE"},
+@@ -318,7 +313,7 @@
+ 
+ /* Receive message from netlink interface and pass those information
+    to the given function. */
+-static int
++int
+ netlink_parse_info (int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
+                     struct nlsock *nl)
+ {
+Index: zebra/zserv.c
+===================================================================
+RCS file: /var/cvsroot/quagga/zebra/zserv.c,v
+retrieving revision 1.42
+diff -u -w -b -r1.42 zserv.c
+--- zebra/zserv.c	10 May 2007 02:38:52 -0000	1.42
++++ zebra/zserv.c	29 Jan 2008 06:46:38 -0000
+@@ -42,6 +42,7 @@
+ #include "zebra/redistribute.h"
+ #include "zebra/debug.h"
+ #include "zebra/ipforward.h"
++#include "zebra/bfd.h"
+ 
+ /* Event list of zebra. */
+ enum event { ZEBRA_SERV, ZEBRA_READ, ZEBRA_WRITE };
+@@ -681,6 +682,59 @@
+ 
+   return zebra_server_send_message(client);
+ }
++#ifdef HAVE_KBFD
++int
++zsend_bfd_peer_up (struct zserv *client, struct bfd_peer *peer)
++{
++  struct stream *s;
++
++  /* Check this client need interface information. */
++  if (! client->ifinfo)
++    return -1;
++
++  s = client->obuf;
++  stream_reset (s);
++
++  zserv_create_header (s, ZEBRA_BFD_PEER_UP);
++
++  /* BFD peer information. */
++  stream_put (s, &peer->su, sizeof(union sockunion));
++  stream_putl (s, peer->ifindex);
++
++  /* Write packet size. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  zebra_server_send_message (client);
++
++  return 0;
++}
++
++int
++zsend_bfd_peer_down (struct zserv *client, struct bfd_peer *peer)
++{
++  struct stream *s;
++
++  /* Check this client need interface information. */
++  if (! client->ifinfo)
++    return -1;
++
++  s = client->obuf;
++  stream_reset (s);
++
++  zserv_create_header (s, ZEBRA_BFD_PEER_DOWN);
++
++  /* BFD peer information. */
++  stream_put (s, &peer->su, sizeof(union sockunion));
++  stream_putl (s, peer->ifindex);
++
++  /* Write packet size. */
++  stream_putw_at (s, 0, stream_get_endp (s));
++
++  zebra_server_send_message (client);
++
++  return 0;
++}
++#endif /*HAVE_KBFD*/
+ 
+ /* Register zebra server interface information.  Send current all
+    interface and address information. */
+@@ -1071,6 +1125,58 @@
+   return 0;
+ }
+ 
++#ifdef HAVE_KBFD
++/* bfd peer add function(from protocol => zebra => kernel) */
++static void
++zread_bfd_peer_add (struct zserv *client, u_short length)
++{
++  struct bfd_peer peer;
++  char appid;
++  struct stream *s;
++
++  /* Get input stream.  */
++  s = client->ibuf;
++
++  memset (&peer, 0, sizeof (struct bfd_peer));
++
++  /* sockunion(peer address) */
++  stream_get (&peer.su, s, sizeof (union sockunion));
++  /* ifindex */
++  peer.ifindex = stream_getl (s);
++  /* application id */
++  appid = stream_getc (s);;
++  /* peer type */
++  peer.type = stream_getc (s);
++
++  kernel_bfd_add_peer (&peer, appid);
++}
++
++/* bfd peer delete function(from protocol => zebra => kernel) */
++static void
++zread_bfd_peer_delete (struct zserv *client, u_short length)
++{
++  struct bfd_peer peer;
++  char appid;
++  struct stream *s;
++
++  /* Get input stream.  */
++  s = client->ibuf;
++
++  memset (&peer, 0, sizeof (struct bfd_peer));
++
++  /* sockunion(peer address) */
++  stream_get (&peer.su, s, sizeof (union sockunion));
++  /* ifindex */
++  peer.ifindex = stream_getl (s);
++  /* application id */
++  appid = stream_getc (s);
++  /* peer type */
++  peer.type = stream_getc (s);
++
++  kernel_bfd_delete_peer (&peer, appid);
++}
++#endif /*HAVE_KBFD*/
++
+ /* Close zebra client. */
+ static void
+ zebra_client_close (struct zserv *client)
+@@ -1283,6 +1389,14 @@
+     case ZEBRA_IPV4_IMPORT_LOOKUP:
+       zread_ipv4_import_lookup (client, length);
+       break;
++#ifdef HAVE_KBFD
++    case ZEBRA_BFD_PEER_ADD:
++        zread_bfd_peer_add (client, length);
++        break;
++    case ZEBRA_BFD_PEER_DELETE:
++        zread_bfd_peer_delete (client, length);
++        break;
++#endif /*HAVE_KBFD*/
+     default:
+       zlog_info ("Zebra received unknown command %d", command);
+       break;
+Index: zebra/zserv.h
+===================================================================
+RCS file: /var/cvsroot/quagga/zebra/zserv.h,v
+retrieving revision 1.16
+diff -u -w -b -r1.16 zserv.h
+--- zebra/zserv.h	14 Sep 2007 14:56:28 -0000	1.16
++++ zebra/zserv.h	29 Jan 2008 06:46:38 -0000
+@@ -25,6 +25,7 @@
+ #include "rib.h"
+ #include "if.h"
+ #include "workqueue.h"
++#include "zebra/bfd.h"
+ 
+ /* Default port information. */
+ #define ZEBRA_VTY_PORT                2601
+@@ -105,6 +106,11 @@
+ extern int zsend_route_multipath (int, struct zserv *, struct prefix *, 
+                                   struct rib *);
+ extern int zsend_router_id_update(struct zserv *, struct prefix *);
++
++#ifdef HAVE_KBFD
++int zsend_bfd_peer_up (struct zserv *, struct bfd_peer *);
++int zsend_bfd_peer_down (struct zserv *, struct bfd_peer *);
++#endif /*HAVE_KBFD*/
+ 
+ extern pid_t pid;
+ 
